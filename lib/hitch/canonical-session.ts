@@ -1,5 +1,4 @@
 import type {
-  CanonicalLedgerRecord,
   CanonicalTrajectoryDocument,
   CanonicalTrajectorySummary,
   SessionEvent,
@@ -47,27 +46,6 @@ function callIdFromResult(data: Record<string, unknown>): string | null {
   return typeof first?.toolCallId === "string" ? first.toolCallId : null;
 }
 
-function textContent(value: unknown): string | null {
-  if (typeof value === "string") return value;
-  if (Array.isArray(value)) {
-    const joined = value.map(textContent).filter(Boolean).join("\n");
-    return joined || null;
-  }
-  if (!value || typeof value !== "object") return null;
-  const object = value as Record<string, unknown>;
-  if (typeof object.text === "string") return object.text;
-  if (typeof object.content === "string") return object.content;
-  if (Array.isArray(object.content)) {
-    const joined = object.content.map(textContent).filter(Boolean).join("\n");
-    return joined || null;
-  }
-  return null;
-}
-
-function eventText(data: Record<string, unknown>): string | null {
-  return textContent(data.message) || textContent(data.content) || textContent(data.text) || null;
-}
-
 function toolFailed(data: Record<string, unknown>): boolean {
   if (data.error) return true;
   const message = data.message && typeof data.message === "object" ? data.message as Record<string, unknown> : null;
@@ -103,9 +81,9 @@ export function parseCanonicalSession(content: string, runId: string): Canonical
   const summary = summarizeCanonical(events);
   return {
     runId,
-    session: { id: parsedHeader.id, version: 0, createdAt: parsedHeader.createdAt },
+    session: parsedHeader,
     summary,
-    records: projectLedger(events, parsedHeader.createdAt),
+    events,
   };
 }
 
@@ -182,10 +160,10 @@ export function summarizeCanonical(events: SessionEvent[]): CanonicalTrajectoryS
   let cacheReadSeen = false;
   let cacheWriteSeen = false;
   const errors: string[] = [];
-  let currentTurnStart: number | null = null;
+  let currentStep: { turn: number; step: number; startedAt: number; firstTokenSeen: boolean } | null = null;
   const ttfts: number[] = [];
   for (const item of events) {
-    if (item.type === "turn/start") { turnCount += 1; currentTurnStart = item.time; }
+    if (item.type === "turn/start") turnCount += 1;
     if (item.type === "turn/end") {
       const reason = item.data.reason;
       const reasonKind = reason && typeof reason === "object" ? (reason as Record<string, unknown>).kind : null;
@@ -193,17 +171,34 @@ export function summarizeCanonical(events: SessionEvent[]): CanonicalTrajectoryS
         const detail = item.data.error || reason;
         errors.push(typeof detail === "string" ? detail : JSON.stringify(detail));
       }
-      currentTurnStart = null;
     }
-    if (item.type === "step/start") stepCount += 1;
+    if (item.type === "step/start") {
+      stepCount += 1;
+      currentStep = {
+        turn: typeof item.data.turn === "number" ? item.data.turn : -1,
+        step: typeof item.data.step === "number" ? item.data.step : -1,
+        startedAt: item.time,
+        firstTokenSeen: false,
+      };
+    }
+    if (item.type === "step/end") currentStep = null;
     if (item.type === "tool/call") toolCalls += 1;
     if (item.type === "tool/result" && toolFailed(item.data)) {
       toolFailures += 1;
       errors.push(`Tool failure at seq ${item.seq}`);
     }
-    if (item.type === "assistant/chunk" && currentTurnStart !== null) {
-      ttfts.push(Math.max(0, item.time - currentTurnStart));
-      currentTurnStart = null;
+    if (item.type === "assistant/chunk" && currentStep && !currentStep.firstTokenSeen) {
+      const turn = typeof item.data.turn === "number" ? item.data.turn : currentStep.turn;
+      const step = typeof item.data.step === "number" ? item.data.step : currentStep.step;
+      const chunk = item.data.chunk && typeof item.data.chunk === "object" ? item.data.chunk as Record<string, unknown> : null;
+      const tokenDelta = chunk && (
+        ((chunk.type === "text-delta" || chunk.type === "reasoning-delta") && chunk.text !== "")
+        || (chunk.type === "tool-call-delta" && (chunk.argumentsDelta !== "" || chunk.name !== undefined))
+      );
+      if (turn === currentStep.turn && step === currentStep.step && tokenDelta) {
+        ttfts.push(Math.max(0, item.time - currentStep.startedAt));
+        currentStep.firstTokenSeen = true;
+      }
     }
     if (item.type === "assistant/message" && item.data.usage && typeof item.data.usage === "object") {
       const usage = item.data.usage as Record<string, unknown>;
@@ -232,50 +227,4 @@ export function summarizeCanonical(events: SessionEvent[]): CanonicalTrajectoryS
     errors: [...new Set(errors)].slice(0, 50),
     ttftMs: ttfts.length ? Math.min(...ttfts) : null,
   };
-}
-
-function projectLedger(events: SessionEvent[], createdAt: number): CanonicalLedgerRecord[] {
-  const callStarts = new Map<string, number>();
-  return events.flatMap((item): CanonicalLedgerRecord[] => {
-    if (["turn/start", "turn/end", "step/start", "step/end", "request/header"].includes(item.type)) return [];
-    const data = item.data;
-    let type: CanonicalLedgerRecord["type"] = "system";
-    let title = item.type;
-    let detail = eventText(data);
-    let status: CanonicalLedgerRecord["status"] = "info";
-    let durationMs: number | null = null;
-    if (item.type === "user/message" || item.type.startsWith("assistant/")) {
-      type = "message";
-      title = item.type === "user/message" ? "User" : "Assistant";
-    } else if (item.type === "tool/call") {
-      type = "tool";
-      const id = typeof data.callId === "string" ? data.callId : "";
-      if (id) callStarts.set(id, item.time);
-      title = typeof data.name === "string" ? data.name : "Tool call";
-      detail = JSON.stringify(data.input ?? data.arguments ?? data, null, 2);
-    } else if (item.type === "tool/result") {
-      type = "tool";
-      const id = callIdFromResult(data);
-      title = "Tool result";
-      status = toolFailed(data) ? "failed" : "succeeded";
-      if (id && callStarts.has(id)) durationMs = Math.max(0, item.time - callStarts.get(id)!);
-      detail = eventText(data) || JSON.stringify(data.message ?? data, null, 2);
-    } else if (item.data.level === "error") {
-      type = "error";
-      title = String(item.data.message || "Diagnostic error");
-      status = "failed";
-    }
-    return [{
-      id: `${item.seq}:${item.type}`,
-      seq: item.seq,
-      type,
-      eventType: item.type,
-      timestamp: item.time,
-      relativeMs: Math.max(0, item.time - createdAt),
-      title: title.slice(0, 240),
-      detail: detail ? detail.slice(0, 20_000) : null,
-      status,
-      durationMs,
-    }];
-  });
 }

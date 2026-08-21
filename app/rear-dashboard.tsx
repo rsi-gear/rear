@@ -3,7 +3,6 @@
 import type { CSSProperties } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
-  CanonicalLedgerRecord,
   CanonicalTrajectoryDocument,
   ComparisonDimension,
   DisplayIdentitySummary,
@@ -14,12 +13,13 @@ import type {
   RunExecutionStatus,
   TaskIdentitySummary,
 } from "@/lib/hitch-types";
+import { DshTrajectory } from "@/app/trajectory/DshTrajectory";
+import { modelIdentityLabel } from "@/lib/hitch/model-identity";
 import { compareRunSummaries } from "@/lib/hitch/strict-comparison";
 
 type AggregationMode = "model" | "harness";
 type Breakdown = { dimension: AggregationMode; value: string };
 type CompareSelection = { taskKey: string; runIds: string[]; dimension: ComparisonDimension };
-type EventFilter = "all" | "actions" | "errors";
 type EvidenceView = "canonical" | "provider";
 
 const EXECUTION: Record<RunExecutionStatus, { label: string; tone: string }> = {
@@ -95,7 +95,7 @@ function shortDigest(value: string | null | undefined): string {
 }
 
 function modelLabel(run: HitchRun): string {
-  return `${run.model.provider ? `${run.model.provider}/` : ""}${run.model.effective_id}${run.model.identity_resolved === true ? "" : " · unresolved"}`;
+  return modelIdentityLabel(run.model);
 }
 
 function harnessLabel(run: HitchRun): string {
@@ -289,11 +289,6 @@ function BreakdownView({ benchmark, breakdown, selectedIds, onToggleRun, onBack,
   );
 }
 
-function EventCard({ event }: { event: CanonicalLedgerRecord }) {
-  const content = <><div className="event-rail"><span className={`event-node ${event.type} ${event.status}`} /></div><div className="event-body"><div className="event-meta"><span className={`event-type ${event.type}`}>{event.eventType}</span><time>+{formatDuration(event.relativeMs)}</time>{event.durationMs != null && <span>{formatDuration(event.durationMs)}</span>}</div><p>{event.title}</p>{event.detail && <pre>{event.detail}</pre>}</div></>;
-  return event.detail ? <details className={`event-card ${event.type}`}><summary>{content}</summary></details> : <div className={`event-card ${event.type}`}>{content}</div>;
-}
-
 function ProviderEvidence({ run }: { run: HitchRun }) {
   const [ordinal, setOrdinal] = useState(0);
   const [page, setPage] = useState<ProviderEvidencePage | null>(null);
@@ -321,7 +316,9 @@ function ProviderEvidence({ run }: { run: HitchRun }) {
 function comparisonInsights(runs: HitchRun[]): string[] {
   if (!runs.every((run) => run.strictMetricEligible && run.observation.state === "valid")) return [];
   const rewards = [...runs].sort((left, right) => (right.observation.state === "valid" ? right.observation.reward : -Infinity) - (left.observation.state === "valid" ? left.observation.reward : -Infinity));
-  const insights = [`观测 reward 范围为 ${formatReward(rewards.at(-1)?.observation.state === "valid" ? rewards.at(-1)!.observation.reward : null)}–${formatReward(rewards[0]?.observation.state === "valid" ? rewards[0].observation.reward : null)}。`];
+  const lowest = rewards.at(-1);
+  const highest = rewards[0];
+  const insights = [`观测 reward 范围为 ${formatReward(lowest?.observation.state === "valid" ? lowest.observation.reward : null)}–${formatReward(highest?.observation.state === "valid" ? highest.observation.reward : null)}。`];
   const tools = [...runs].sort((left, right) => (left.trajectory.summary?.toolCalls || 0) - (right.trajectory.summary?.toolCalls || 0));
   if ((tools[0]?.trajectory.summary?.toolCalls ?? null) !== (tools.at(-1)?.trajectory.summary?.toolCalls ?? null)) insights.push(`工具调用数从 ${tools[0].trajectory.summary?.toolCalls ?? "—"} 到 ${tools.at(-1)?.trajectory.summary?.toolCalls ?? "—"}。`);
   return insights;
@@ -330,9 +327,9 @@ function comparisonInsights(runs: HitchRun[]): string[] {
 function CompareView({ benchmark, compare, onBack }: { benchmark: HitchBenchmark; compare: CompareSelection; onBack: () => void }) {
   const runs = compare.runIds.map((id) => benchmark.runs.find((run) => run.id === id)).filter(Boolean) as HitchRun[];
   const task = benchmark.tasks.find((item) => item.key === compare.taskKey);
-  const [eventFilter, setEventFilter] = useState<EventFilter>("all");
   const [evidenceView, setEvidenceView] = useState<EvidenceView>("canonical");
   const [syncScroll, setSyncScroll] = useState(true);
+  const [actualDuration, setActualDuration] = useState(false);
   const [documents, setDocuments] = useState<Record<string, CanonicalTrajectoryDocument>>({});
   const [loadErrors, setLoadErrors] = useState<Record<string, string>>({});
   const laneRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -340,6 +337,10 @@ function CompareView({ benchmark, compare, onBack }: { benchmark: HitchBenchmark
   const comparison = useMemo(() => compareRunSummaries(runs, { dimension: compare.dimension, referenceRunId: runs[0]?.id }), [compare.dimension, runs]);
   const reasons = [...new Set(comparison.excluded.flatMap((item) => item.reasons))];
   const insights = comparison.strict ? comparisonInsights(runs) : [];
+
+  useEffect(() => {
+    setActualDuration(window.localStorage.getItem("dsh-trajectory-actual-duration") === "true");
+  }, []);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -356,11 +357,10 @@ function CompareView({ benchmark, compare, onBack }: { benchmark: HitchBenchmark
     return () => { timers.forEach(window.clearTimeout); controller.abort(); };
   }, [compare.runIds.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const filteredEvents = (run: HitchRun) => (documents[run.id]?.records || []).filter((event) => {
-    if (eventFilter === "actions") return event.type === "tool" || event.type === "error";
-    if (eventFilter === "errors") return event.type === "error" || event.status === "failed";
-    return true;
-  });
+  const updateActualDuration = (value: boolean) => {
+    setActualDuration(value);
+    window.localStorage.setItem("dsh-trajectory-actual-duration", String(value));
+  };
   const synchronize = (index: number) => {
     if (!syncScroll || syncing.current) return;
     const source = laneRefs.current[index];
@@ -381,7 +381,7 @@ function CompareView({ benchmark, compare, onBack }: { benchmark: HitchBenchmark
       <div className="compare-grid summary-grid" style={{ "--lanes": runs.length } as CSSProperties}>
         {runs.map((run, index) => <article className="run-summary" key={run.id}><div className="lane-number">0{index + 1}</div><div className="run-summary-title"><div><strong>{harnessLabel(run)}</strong><span>{modelLabel(run)}</span></div><ExecutionBadge status={run.execution} /></div><div className="summary-metrics"><span><small>REWARD</small><strong>{run.observation.state === "valid" ? formatReward(run.observation.reward) : "—"}</strong></span><span><small>AGENT</small><strong>{formatDuration(agentDuration(run))}</strong></span><span><small>TOOLS</small><strong>{run.trajectory.summary?.toolCalls ?? "—"}</strong></span><span><small>INPUT</small><strong>{formatNumber(run.trajectory.summary?.usage.inputTokens ?? null)}</strong></span><span><small>TTFT</small><strong>{formatDuration(run.trajectory.summary?.ttftMs ?? null)}</strong></span><span><small>REASONING</small><strong>—</strong></span><span><small>COST</small><strong>—</strong></span></div><div className="phase-legend"><span><i className="phase-key phase-environment" />环境 <strong>{formatDuration(run.backendPhases?.environment ?? null)}</strong></span><span><i className="phase-key phase-setup" />安装 <strong>{formatDuration(run.backendPhases?.agentSetup ?? null)}</strong></span><span><i className="phase-key phase-verify" />Harbor 验证 <strong>{formatDuration(run.backendPhases?.verifier ?? null)}</strong></span></div><div className="identity-panel"><span>run {run.id}</span><span>{run.parent ? `${run.parent.eval_id} / ${run.parent.trial_id} / attempt ${run.parent.attempt}` : "no eval parent"}</span><span>requested harness {run.harness.requested_ref} · requested model {run.model.requested_id}</span><span>lifecycle {formatDuration(lifecycleDuration(run))} · protocol {shortDigest(run.protocol.environment_identity)} · params {shortDigest(run.model.parameters_sha256)}</span></div><div className="trajectory-badges"><span>{run.trajectory.evidenceFidelity === "provider_native" ? run.trajectory.hasCanonical ? "Native evidence + canonical view" : "Native evidence · no canonical view" : run.trajectory.evidenceFidelity || "no evidence"}</span><span>{run.trajectory.availability}</span>{run.trajectory.redactions.length > 0 && <span>{run.trajectory.redactions.reduce((sum, item) => sum + item.count, 0)} redactions</span>}</div></article>)}
       </div>
-      {evidenceView === "canonical" && <><div className="compare-toolbar"><div className="filter-tabs"><button className={eventFilter === "all" ? "selected" : ""} onClick={() => setEventFilter("all")}>全部</button><button className={eventFilter === "actions" ? "selected" : ""} onClick={() => setEventFilter("actions")}>动作</button><button className={eventFilter === "errors" ? "selected" : ""} onClick={() => setEventFilter("errors")}>错误</button></div>{runs.length > 1 && <label className="switch-label"><input type="checkbox" checked={syncScroll} onChange={(event) => setSyncScroll(event.target.checked)} /><span className="switch" />同步滚动</label>}</div><div className="compare-grid trace-grid" style={{ "--lanes": runs.length } as CSSProperties}>{runs.map((run, index) => { const events = filteredEvents(run); return <section className="trace-lane" key={run.id}><header><span className="lane-accent" /><strong>{run.harness.harness_id}</strong><span>{events.length} records</span></header><div className="trace-scroll" ref={(node) => { laneRefs.current[index] = node; }} onScroll={() => synchronize(index)}>{events.length ? events.map((event) => <EventCard key={event.id} event={event} />) : <div className="lane-empty"><span>∅</span><strong>{run.trajectory.availability === "raw_only" ? "只有 Provider Evidence" : loadErrors[run.id] ? "轨迹读取失败" : run.trajectory.hasCanonical ? "正在加载 Canonical View" : `Canonical ${run.trajectory.availability}`}</strong><p>{loadErrors[run.id] || run.trajectory.diagnostic || "没有匹配的 canonical records。"}</p></div>}</div></section>; })}</div></>}
+      {evidenceView === "canonical" && <>{runs.length > 1 && <div className="compare-toolbar compare-toolbar-sync"><label className="switch-label"><input type="checkbox" checked={syncScroll} onChange={(event) => setSyncScroll(event.target.checked)} /><span className="switch" />同步滚动</label></div>}<div className="compare-grid trace-grid" style={{ "--lanes": runs.length } as CSSProperties}>{runs.map((run, index) => { const document = documents[run.id]; return <section className="trace-lane dsh-trace-lane" key={run.id}><header><span className="lane-accent" /><strong>{run.harness.harness_id}</strong><span>{document ? `${document.summary.turnCount} turns · ${document.summary.toolCalls} calls` : "canonical"}</span></header>{document ? <DshTrajectory document={document} actualDuration={actualDuration} onActualDurationChange={updateActualDuration} setScrollElement={(node) => { laneRefs.current[index] = node; }} onLedgerScroll={() => synchronize(index)} /> : <div className="lane-empty"><span>∅</span><strong>{run.trajectory.availability === "raw_only" ? "只有 Provider Evidence" : loadErrors[run.id] ? "轨迹读取失败" : run.trajectory.hasCanonical ? "正在加载 Canonical View" : `Canonical ${run.trajectory.availability}`}</strong><p>{loadErrors[run.id] || run.trajectory.diagnostic || "没有可展示的 canonical trajectory。"}</p></div>}</section>; })}</div></>}
       {evidenceView === "provider" && <div className="compare-grid trace-grid" style={{ "--lanes": runs.length } as CSSProperties}>{runs.map((run) => <section className="trace-lane" key={run.id}><header><span className="lane-accent" /><strong>{run.harness.harness_id}</strong><span>{run.trajectory.providerFiles} files</span></header><ProviderEvidence run={run} /></section>)}</div>}
     </div>
   );

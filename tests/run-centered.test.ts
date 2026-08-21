@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { adaptCanonicalTrajectory } from "../app/trajectory/dsh-adapter";
 import { parseCanonicalSession } from "../lib/hitch/canonical-session";
 import { parseTrajectoryRefV2 } from "../lib/hitch/trajectory-ref";
 import { scanHitch, unconfiguredHitchSnapshot } from "../lib/hitch-scanner";
@@ -40,6 +41,8 @@ interface RunOptions {
   reward?: number;
   invalidReason?: string;
   model?: string;
+  effectiveModel?: string;
+  modelProvider?: string;
   parent?: { evalId: string; trialId: string; attempt: number };
   taskId?: string;
   taskDigest?: typeof digestA | typeof digestC;
@@ -101,7 +104,13 @@ async function writeRun(root: string, options: RunOptions) {
     ...(options.parent ? { parent: { kind: "eval", eval_id: options.parent.evalId, trial_id: options.parent.trialId, attempt: options.parent.attempt } } : {}),
     status: "succeeded",
     harness: { harness_id: "codex", requested_ref: "codex@version:1", revision_identity: digestA, artifact_id: digestB },
-    model: { provider: "openai", requested_id: options.model || "model-a", effective_id: `${options.model || "model-a"}-snapshot`, parameters_sha256: digestC, identity_resolved: true },
+    model: {
+      provider: options.modelProvider || "openai",
+      requested_id: options.model || "model-a",
+      effective_id: options.effectiveModel || `${options.model || "model-a"}-snapshot`,
+      parameters_sha256: digestC,
+      identity_resolved: true,
+    },
     protocol: { timeout_ms: 1000, workspace_mode: "shared", initial_workspace_digest: digestA, environment_identity: digestB },
     observation: valid
       ? { status: "valid", reward: options.reward ?? 0, verifier_result_ref: "verifier/result.json" }
@@ -115,6 +124,33 @@ async function writeRun(root: string, options: RunOptions) {
     sealed: false,
   });
 }
+
+test("model grouping ignores requested aliases and avoids duplicate provider labels", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "rear-model-identity-"));
+  await writeRun(root, {
+    runId: "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    model: "deepseek-v4-flash",
+    effectiveModel: "deepseek-v4-flash",
+    modelProvider: "deepseek",
+  });
+  await writeRun(root, {
+    runId: "run_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    model: "deepseek/deepseek-v4-flash",
+    effectiveModel: "deepseek/deepseek-v4-flash",
+    modelProvider: "deepseek",
+  });
+
+  const snapshot = scanHitch(root);
+  assert.equal(snapshot.runs[0]?.modelKey, snapshot.runs[1]?.modelKey);
+  assert.equal(snapshot.benchmarks[0]?.models.length, 1);
+  assert.equal(snapshot.benchmarks[0]?.models[0]?.label, "deepseek/deepseek-v4-flash · params cccccccc");
+  const modelComparison = compareRunSummaries(snapshot.runs, { dimension: "model" });
+  assert.equal(modelComparison.groups.length, 1);
+  const harnessComparison = compareRunSummaries(snapshot.runs, { dimension: "harness" });
+  assert.ok(harnessComparison.excluded.every((item) => !item.reasons.includes("model_identity_mismatch")));
+
+  await rm(root, { recursive: true, force: true });
+});
 
 test("run-centered scanner joins eval trials and counts valid reward zero", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "rear-run-centered-"));
@@ -241,6 +277,36 @@ test("canonical parser rejects seq gaps and unpaired tools", () => {
     { type: "turn/end", seq: 4, time: now, data: { turn: 1 } },
   ];
   assert.throws(() => parseCanonicalSession(unpaired.map((line) => JSON.stringify(line)).join("\n"), "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"), /without matching call/);
+});
+
+test("canonical detail preserves raw events and uses DSH lifecycle timing", () => {
+  const now = 1_700_000_000_000;
+  const lines = [
+    { type: "session", version: 0, id: "session-lifecycle", createdAt: now, delegationDepth: 2, custom: "kept" },
+    { type: "turn/start", seq: 0, time: now, data: { turn: 1 } },
+    { type: "step/start", seq: 1, time: now + 10, data: { turn: 1, step: 1 } },
+    { type: "request/header", seq: 2, time: now + 11, data: { turn: 1, step: 1, reason: "initial", header: { system: "Be precise", config: { provider: "test", model: "model-x" }, tools: [{ name: "shell", description: "Run a command", parameters: { type: "object" } }] } } },
+    { type: "assistant/chunk", seq: 3, time: now + 12, data: { turn: 1, step: 1, chunk: { type: "text-delta", text: "" } } },
+    { type: "assistant/chunk", seq: 4, time: now + 17, data: { turn: 1, step: 1, chunk: { type: "reasoning-delta", text: "think" } } },
+    { type: "assistant/message", seq: 5, time: now + 20, data: { turn: 1, step: 1, message: { content: [{ type: "text", text: "done" }], source: { provider: "test", model: "model-x" } }, usage: { inputTokens: 7, outputTokens: 3 } } },
+    { type: "tool/call", seq: 6, time: now + 22, data: { turn: 1, step: 1, callId: "call-1", name: "shell", arguments: { command: "pwd" } } },
+    { type: "tool/result", seq: 7, time: now + 27, data: { turn: 1, step: 1, message: { source: { callId: "call-1" }, content: [{ type: "tool-result", toolCallId: "call-1", content: "ok", isError: false }] } } },
+    { type: "step/end", seq: 8, time: now + 28, data: { turn: 1, step: 1 } },
+    { type: "turn/end", seq: 9, time: now + 29, data: { turn: 1 } },
+  ];
+  const document = parseCanonicalSession(lines.map((line) => JSON.stringify(line)).join("\n"), "run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+  assert.equal(document.events.length, 10);
+  assert.equal(document.session.delegationDepth, 2);
+  assert.equal(document.session.custom, "kept");
+  assert.equal(document.summary.ttftMs, 7);
+
+  const model = adaptCanonicalTrajectory(document);
+  assert.deepEqual(model.records.map((record) => record.role), ["system", "assistant", "tool"]);
+  assert.equal(model.records[1].text, "done");
+  assert.equal(model.records[2].durationMs, 5);
+  assert.equal(model.records[2].schema && typeof model.records[2].schema === "object", true);
+  assert.equal(model.requests[0].provider, "test");
+  assert.equal(model.requests[0].usage?.outputTokens, 3);
 });
 
 test("trajectory paths and symlinks are rejected before content is trusted", async () => {

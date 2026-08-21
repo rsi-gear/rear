@@ -3,6 +3,7 @@ import type {
   HudRunSummary,
   StrictComparisonResult,
 } from "../hitch-types";
+import { effectiveModelIdentity } from "./model-identity";
 
 function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -35,7 +36,10 @@ function mismatches(reference: HudRunSummary, run: HudRunSummary, dimension: Com
   if (left.verifier_identity !== right.verifier_identity) reasons.push("verifier_identity_mismatch");
   if (canonicalJson(reference.protocol) !== canonicalJson(run.protocol)) reasons.push("protocol_identity_mismatch");
   if (dimension === "model" && canonicalJson(reference.harness) !== canonicalJson(run.harness)) reasons.push("harness_identity_mismatch");
-  if (dimension === "harness" && canonicalJson(reference.model) !== canonicalJson(run.model)) reasons.push("model_identity_mismatch");
+  if (
+    dimension === "harness"
+    && canonicalJson(effectiveModelIdentity(reference.model)) !== canonicalJson(effectiveModelIdentity(run.model))
+  ) reasons.push("model_identity_mismatch");
   return reasons;
 }
 
@@ -71,7 +75,9 @@ export function compareRunSummaries(
     const canGroup = !reasons.some((reason) => IDENTITY_EXCLUSIONS.has(reason)) && Boolean(reference) && run.context.kind === "benchmark_task";
     if (canGroup) {
       const identity = dimension === "model" ? run.model : run.harness;
-      const key = canonicalJson(identity);
+      const key = dimension === "model"
+        ? canonicalJson(effectiveModelIdentity(run.model))
+        : canonicalJson(run.harness);
       let group = groups.get(key);
       if (!group) {
         group = {

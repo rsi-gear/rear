@@ -265,26 +265,11 @@ export interface SessionEvent {
   [key: string]: unknown;
 }
 
-export type LedgerRecordType = "message" | "tool" | "error" | "system";
-
-export interface CanonicalLedgerRecord {
-  id: string;
-  seq: number;
-  type: LedgerRecordType;
-  eventType: string;
-  timestamp: number;
-  relativeMs: number;
-  title: string;
-  detail: string | null;
-  status: "succeeded" | "failed" | "info";
-  durationMs: number | null;
-}
-
 export interface CanonicalTrajectoryDocument {
   runId: string;
-  session: { id: string; version: 0; createdAt: number };
+  session: SessionHeaderLine;
   summary: CanonicalTrajectorySummary;
-  records: CanonicalLedgerRecord[];
+  events: SessionEvent[];
 }
 
 export interface ProviderEvidenceDescriptor {

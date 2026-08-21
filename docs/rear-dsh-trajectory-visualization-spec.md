@@ -1,417 +1,409 @@
-# REAR DSH 轨迹可视化修改 Spec
+# REAR 轨迹展示 1:1 对齐 DSH Spec
 
-状态：Proposed  
-日期：2026-08-21  
-范围：`<REAR_REPOSITORY_ROOT>`，另含一个必须先满足的 Hitch 评测产物导出前置条件
+- 状态：Implemented
+- 日期：2026-08-21
+- REAR 基线：`35a2c21207c1838f3227c5fe0ef8d81917e5c2d9`
+- DSH 基线：`deepseek-harness@99f6f02fecdb7dff40c3fbc9470f5907c29f74ca`
+- DSH 包：`packages/client/ui-trajectory@0.1.0-rc.7`
+- 数据契约：RunRecord V1、TrajectoryRef V2、canonical DSH session version 0
 
-## 1. 背景与基线
+## 1. 结论
 
-Hitch 已把 canonical trajectory 统一为 DSH session JSONL：第一行是 `SessionHeaderLine`，后续每行是一个 `SessionEvent`。每次运行通过 `trajectory.ref.json` 声明格式、fidelity、session 路径和可选 SHA-256。
+REAR 当前的 canonical 轨迹是自定义事件卡片列表；DSH 是由以下部分组成的紧凑轨迹工作台：
 
-本 spec 基于以下本地版本：
+```text
+Trajectory toolbar                         32 px
+Input / Model / Tools overview timeline    50 px
+┌──────────────── ledger ────────────────┬─ local inspector ─┐
+│ Turn rail + Request marker             │ tabs + detail     │
+│ Role tag      one-line content         │ summary/payload   │
+│ ASSISTANT     answer                    │ usage/timing      │
+│ TOOL          args  →  result           │ schema/raw        │
+└────────────────────────────────────────┴───────────────────┘
+```
 
-- DSH 轨迹 UI 参考实现：`deepseek-harness@99f6f02fecdb7dff40c3fbc9470f5907c29f74ca`，核心目录为 `packages/client/ui-trajectory`。
-- Hitch canonical trajectory 实现：`agent-hitch@eab418605726bc8ac7db3572e2638e29c551ccc7`，核心目录为 `src/trajectories`。
-- Hitch 声明的 DSH 持久化兼容点：`contract_commit = 141eb6fef83422698aef7a981029e843e8161534`、`family = dsh-session`、`version = 0`、`compression = none`、`pack_chunks = false`。
-- REAR 当前直接读取 Harbor trial 下的 `agent/hitch-events.jsonl`，把 `message.delta`、`tool.started`、`tool.completed` 等控制/兼容事件压扁成 `TraceEvent[]`，并在 Compare 页面逐卡片展示。
+本次修改必须按固定 DSH commit 的组件结构、投影语义、尺寸和交互进行源码级移植，不再基于 DSH “重新设计一套相似 UI”。
 
-DSH 参考实现的关键不是样式，而是四层分离：
-
-1. 原始 `SessionEvent` 日志。
-2. 按事件生命周期折叠出的稳定业务记录，例如 Assistant、Tool、Request。
-3. `Turn -> Message/Step -> Record` 布局模型。
-4. 共用该布局模型的 ledger、时间轴、搜索、折叠和 inspector。
-
-REAR 应复用这套分层和交互原则，但不直接依赖 `@deepseek-ai/dsh-client-ui-trajectory`。该包依赖 Cordis、DSH client runtime、locale/slot/primitives 等完整浏览器插件栈，不能作为 REAR 的独立 React 组件使用；REAR 只移植与当前产品有关的纯投影逻辑和 UI 行为。
+`Canonical View` 内不保留 REAR 当前的 `.event-card` 展示。REAR 只保留轨迹组件外层的 benchmark/run 对比能力，以及 DSH 本身没有的 Provider Evidence 入口和多 run 同步滚动。
 
 ## 2. 目标
 
-将 Compare 页的轨迹区域从 Hitch 旧兼容事件卡片，替换为由 canonical DSH session 投影出的可比较轨迹视图：
-
-- 按 Turn 和 Step 组织 User、System、Assistant、Tool 与 Diagnostic 记录。
-- 将 tool call 与 tool result 合成一条有状态、有耗时的 Tool 记录。
-- 将 assistant chunk 与最终 message 合成一条 Assistant 记录；只在日志确实提供首 token 时间时展示 TTFT。
-- 提供 DSH 风格的三泳道 overview、搜索、Turn/Call 折叠、记录筛选和详情检查器。
-- 保留 REAR 的 1–4 条轨迹并排比较、运行摘要、同步滚动和 verifier 结果。
-- canonical session 成为新运行的唯一轨迹事实来源；Hitch 控制日志、Harbor 状态和 verifier 不伪装成 DSH 会话事件。
+1. 同一份 canonical session 在 REAR 和 DSH 中产生相同的 Turn、Request、Assistant、Tool 行顺序及生命周期状态。
+2. REAR 的单条轨迹视图在结构、密度、颜色语义、折叠、搜索、timeline 和 inspector 行为上与固定 DSH 基线一致。
+3. Tool call/result 合成一行；assistant chunks/final message 合成一行，不再按原始 event 逐卡片展示。
+4. 1–4 条轨迹仍可在 REAR 中并排比较，每条 lane 内部都是一个独立 DSH trajectory surface。
+5. 缺失 timing、usage、schema 或 output 时保留 DSH 的“未知/未记录”语义，不显示伪造的 `0`。
 
 ## 3. 非目标
 
-- 不把 DSH 的 Cordis/client runtime 引入 REAR。
-- 不在 REAR 中重新实现 Hitch trajectory 生成或修复非法 session。
-- P0 不支持编辑、反馈写入、恢复会话、子 agent 树、compaction、nested code-dispatch 或实时未完成 session 流式追踪。
-- 不改变 benchmark 聚合、任务选择和 2–4 条轨迹比较流程。
-- 不增加 D1、R2 或公开托管能力；REAR 继续是读取本机文件系统的 local-only 工具。
-- 不把旧 `hitch-events.jsonl` 转换后冒充 canonical DSH 数据。
+- 不改变 Overview、Breakdown、strict comparison、reward/verifier 和 run summary 的产品逻辑。
+- 不改变 Provider Evidence 的分页和原始文件查看方式。
+- 不引入 DSH 的 Cordis、conversation shell、composer、client runtime 或插件加载器。
+- 不重新支持 TrajectoryRef V1、Harbor trial 旧日志或 `hitch-events.jsonl` fallback；存储发现逻辑以 `docs/rear-run-centered-storage-adaptation-spec.md` 为准。
+- 不为 finalized canonical artifact 伪造 live streaming、older-history pagination、running duration 或 composer overlay。
+- 不提前实现 canonical contract 中不存在的 compaction、retry、subtool/code-dispatch 或 subagent UI。
 
-## 4. P0 前置条件：导出 Harbor 容器内的 canonical trajectory
+## 4. 唯一允许的差异
 
-这是实现 REAR 修改前必须解决的数据可达性问题。
+“1:1 对齐”允许的差异只有以下六项：
 
-当前 `integrations/harbor/hitch_harbor_agent.py` 使用 `HITCH_ROOT=/tmp/hitch-state`。运行结束后，它只把以下文件写入 `/logs/agent`：
+1. DSH 组件由 `Session` store 取数；REAR 由 `/api/hitch-trajectory` 返回的已校验 canonical document 取数。
+2. DSH design tokens 以 dark theme 的实际值复制并限定在轨迹 surface 内，避免污染 REAR 外壳。
+3. DSH primitives（Tooltip、MarkdownText、JsonTree、图标）使用 REAR 本地适配器，但 DOM 语义、视觉尺寸和交互保持一致。
+4. DSH 针对 viewport 的 inspector 窄屏规则，在 REAR 中改为针对单条 lane 的 container query；阈值仍为 `760px`，ledger role tag 的 `620px` 阈值不变。
+5. REAR 在 DSH surface 外保留 lane header、run summary、Canonical/Provider 切换和同步滚动开关。
+6. finalized artifact 没有 earlier-history/live partial 时，不渲染 DSH 的 history loading control；其余布局不得因此改变。
 
-- `hitch-events.jsonl`
-- `hitch-result.json`
-- `hitch-stderr.log`
+除上述白名单外，任何新增列、卡片、筛选器、抽屉、颜色体系或交互都视为不符合本 spec。
 
-canonical `trajectory.ref.json` 和 `trajectory/.../session.jsonl` 仍位于临时 Harbor 容器的 `/tmp/hitch-state/runs/<run_id>/`，容器删除后宿主机 REAR 无法读取。`hitch-result.json.trajectory.path` 即使存在也是容器绝对路径，不能作为宿主机路径使用。
+## 5. 明确禁止的替代实现
 
-Hitch/Harbor 必须额外导出以下稳定 artifact：
+| 禁止方案 | 原因 |
+| --- | --- |
+| 继续使用 `.event-card`，只修改颜色和间距 | DSH 的核心是 lifecycle record ledger，不是 event card。 |
+| 把 tool call 与 tool result 分成两行 | 与 DSH record 语义不一致。 |
+| 为每个 `assistant/chunk` 建一行 | DSH 在同一 Assistant lifecycle 内组装 chunks。 |
+| 增加 `# / Event / Content / Time` 表头 | 当前 DSH ledger 没有 column header，只有两列布局。 |
+| 增加可见的 `Step N` header row | 当前 DSH 通过 Request marker 和 inspector location 表达 Step。 |
+| 使用 Compare 级共享 toolbar | DSH 的搜索、Turn/Call 折叠和选中状态属于单条轨迹。 |
+| 使用跨所有 lane 的共享 drawer | DSH inspector 位于当前 trajectory surface 内部。 |
+| 保留“全部 / 动作 / 错误”过滤器 | DSH 没有该过滤器；只提供搜索、timeline focus 和折叠。 |
+| timeline 选区直接删除未命中记录 | DSH 只降低选区外行的透明度，不过滤 ledger。 |
+| 用当前时间计算 running duration | DSH 对进行中且无完成时间的记录显示未知。 |
+
+## 6. 数据契约
+
+### 6.1 当前问题
+
+当前 `lib/hitch/canonical-session.ts` 把 session 压成扁平 `CanonicalLedgerRecord[]`：
+
+- request/header、Turn 和 Step 信息被丢弃；
+- tool call/result 成为两条记录；
+- assistant lifecycle 被拆成 chunk/message 记录；
+- source blocks、prompt、tool schema、reasoning 和 request detail 无法供 DSH inspector 使用。
+
+因此只替换 React/CSS 无法达到 DSH 展示效果，必须先停止生成这个扁平 UI 模型。
+
+### 6.2 Detail API
+
+`GET /api/hitch-trajectory?run=<run-id>&view=canonical` 继续只接受已索引 run id，并继续使用 canonical file SHA-256 作为 ETag。响应改为保留已校验 session events：
+
+```ts
+interface CanonicalTrajectoryDocument {
+  runId: string
+  session: SessionHeaderLine
+  summary: CanonicalTrajectorySummary
+  events: SessionEvent[]
+}
+```
+
+移除 `CanonicalTrajectoryDocument.records` 和 `CanonicalLedgerRecord`。完整 events 只在用户打开 Compare 后加载当前 1–4 条 run，不回到 `/api/hitch-data` summary payload。
+
+### 6.3 DSH adapter
+
+浏览器端增加纯函数：
+
+```ts
+buildDshTrajectorySnapshot(
+  header: SessionHeaderLine,
+  events: readonly SessionEvent[],
+): DshTrajectorySnapshot
+```
+
+该函数按固定 DSH commit 中以下源码的语义移植：
+
+- `trajectory-message-definitions.ts`
+- `trajectory-assistant-definition.ts`
+- `trajectory-tool-definition.ts`
+- `trajectory-request-header-definition.ts`
+- `trajectory-snapshot-builder.ts`
+- `layout.ts`
+
+输出必须包含 DSH layout 所需的 `eventNodes`、`eventLocations`、`requests`、`callSchemas`、`partial` 和 `runningCalls`。finalized REAR artifact 的 `partial` 固定为 `null`，`runningCalls` 正常应为空；不得因此删掉 layout 对这两个字段的接口。
+
+### 6.4 Lifecycle 规则
+
+| canonical event | DSH 对齐行为 |
+| --- | --- |
+| `turn/start`, `turn/end` | 建立 Turn 边界和结束错误；不生成普通 ledger row。 |
+| `step/start`, `step/end` | 建立 Assistant request 生命周期和 Step location；不生成普通 ledger row。 |
+| `request/header` | 生成初始 SYSTEM 或 prompt update，并为 request inspector 提供 prompt、tools、config 和 provenance。 |
+| `user/message` source=user | USER record。按 DSH 规则归入后续 Assistant 所属 Turn。 |
+| `user/message` 其他 source | CONTEXT record，保留 source、content blocks 和 provenance。 |
+| `assistant/chunk` | 更新同一 `(turn, step)` Assistant 状态、首 token 时间、blocks 和 usage；不单独成行。 |
+| `assistant/message` | 完成 ASSISTANT record；最终 blocks 为权威内容。 |
+| `tool/call` | 以 `callId` 创建 TOOL lifecycle，保留 name、arguments、turn、step、start time。 |
+| `tool/result` | 合并到同一个 TOOL row，填充 result blocks、error 和 duration。 |
+| unknown + `ignorable: true` | 保留在 raw session，不进入主 ledger。 |
+| unknown required event | canonical detail 判为 unsupported/corrupt，不猜测展示。 |
+
+record identity 必须使用 DSH 的稳定策略：显式 `recordId` 优先，其次 `callId`、source `seq`，最后才允许 index fallback。React key、virtual row key、搜索命中、折叠和 inspector selection 必须共享该 identity。
+
+### 6.5 Timing 与 usage
+
+- Assistant start：`step/start.time`。
+- Assistant first token：第一个产生可见 token/reasoning delta 的 `assistant/chunk.time`。
+- Assistant completed：final `assistant/message.time` 或明确的 step/turn interruption boundary。
+- TTFT：`firstTokenTime - stepStartTime`；没有 chunk 时为 unknown，不得从 `turn/start` 推算。
+- Tool duration：`tool/result.time - tool/call.time`。
+- Input/Output/Cache/Reasoning token 按 DSH request usage 字段展示；字段缺失与数值 `0` 必须区分。
+- timeline 只有在 start/duration 可用时才使用 recorded-time span；未知 timing 的 record 在 sequence 模式仍可见。
+
+## 7. UI 结构与精确尺寸
+
+每条 canonical lane 的结构固定为：
 
 ```text
-<trial>/agent/
-  hitch-result.json
-  hitch-trajectory.ref.json
-  hitch-trajectory.session.jsonl
+REAR lane header                         # REAR-only
+└─ DshTrajectorySurface
+   ├─ TrajectoryToolbar
+   ├─ TrajectoryTimeline
+   └─ TrajectoryTableSplit
+      ├─ Ledger table pane
+      └─ Local Event details inspector
 ```
 
-导出规则：
+DSH surface 使用 DSH dark-theme token 值和字体栈，不继承 REAR 的 lime accent。必须保留以下尺寸：
 
-- `hitch-trajectory.session.jsonl` 必须是 canonical session 的逐字节副本。
-- 导出的 ref 保留 `run_id`、`session_id`、`format`、`fidelity` 和 `sha256`，但将 `path` 改写为相对文件名 `hitch-trajectory.session.jsonl`。
-- 不修改容器内原始 ref；只改写导出副本的路径。
-- `include_logs = ["hitch-*"]` 已能匹配上述命名，不需要增加一套 Harbor artifact 机制。
-- 导出失败必须使 trial 明确失败，不能退回旧事件日志并仍宣称 canonical trajectory 可用。
+| 元素 | DSH 基线 |
+| --- | ---: |
+| Toolbar | `32px` |
+| Toolbar action | `20px` |
+| Search | `22px` 高，目标宽度 `164px` |
+| Timeline | `50px` |
+| Timeline labels | `44px` 宽 |
+| Timeline span | `8px` 高，三 lane 间距 `14px` |
+| Normal ledger row | `30px` |
+| Collapsed summary row | `20px` |
+| Event column | `122px`；lane ≤ `620px` 时 `50px` |
+| Role tag | `19px` 高 |
+| Inspector | 默认 `clamp(320px, 38%, 440px)`；可拖到 `720px`，ledger 至少保留 `280px` |
+| Inspector header | `42px` |
+| Inspector tabs | `34px` |
+| Virtualization | `>100` records；overscan `12` rows；估算 viewport `600px` |
 
-REAR 也支持非 Harbor 的直接 Hitch run：若 `<HITCH_DATA_ROOT>/runs/<run_id>/trajectory.ref.json` 存在，可以直接读取该 ref 指向的 session。
-
-## 5. 输入契约和发现顺序
-
-### 5.1 支持的格式
-
-P0 只接受 Hitch V1 声明的格式：
-
-```ts
-interface TrajectoryFormatRef {
-  family: "dsh-session";
-  version: 0;
-  contract_commit: string;
-  compression: "none";
-  pack_chunks: false;
-}
-```
-
-初始支持的 `contract_commit` 为 `141eb6fef83422698aef7a981029e843e8161534`。解析器使用显式 supported-contract registry；遇到其他 commit 或 version 时展示“不支持的轨迹版本”，不得按最接近格式猜测。
-
-### 5.2 每个 trial 的发现顺序
-
-1. `<trial>/agent/hitch-trajectory.ref.json`。
-2. 若 ref 不存在且 trial metadata 有 `hitch_run_id`，尝试 `<HITCH_DATA_ROOT>/runs/<hitch_run_id>/trajectory.ref.json`。
-3. 若两者都不存在但有 `hitch-events.jsonl`，标记为 `legacy`，在 UI 中提供明确标识的旧日志只读 fallback。
-4. 若 canonical ref 存在但无效、hash 不匹配或 session 不可读，标记为 `invalid`；不得静默退回 legacy。
-5. 正在运行且尚未生成 ref 时标记为 `pending`。
-
-### 5.3 安全与完整性
-
-reader 必须检查：
-
-- ref schema、format、fidelity 和请求的 `run_id` 一致。
-- session 第一行是 version 0 header，`header.id === ref.session_id`。
-- event `seq` 从 0 连续递增，`time` 是非负安全整数，`data` 是对象。
-- Turn/Step 正确嵌套并闭合；Tool result 只配对同一步内的一个已打开 call。
-- ref 有 `sha256` 时，读取内容的摘要必须一致。
-- 导出 ref 的相对路径只能解析到该 trial 的 `agent` 目录内；直接 run 的路径只能位于对应 `<HITCH_DATA_ROOT>/runs/<run_id>` 内。
-- HTTP API 只接受 REAR run id，不接受任意文件路径。
-- canonical 文件是 finalized artifact；截断行或非法 JSON 视为损坏，不能沿用旧 parser“忽略半行”的 live-log 行为。
-
-## 6. 数据架构
-
-### 6.1 Summary API 与 Detail API 分离
-
-`GET /api/hitch-data` 不再返回每个 run 的完整 `events`。它只返回 benchmark、run 摘要和 trajectory descriptor：
-
-```ts
-type TrajectoryAvailability =
-  | "available"
-  | "pending"
-  | "legacy"
-  | "missing"
-  | "invalid"
-  | "unsupported";
-
-interface HitchTrajectorySummary {
-  availability: TrajectoryAvailability;
-  fidelity?: "native" | "normalized" | "minimal";
-  contractCommit?: string;
-  sessionId?: string;
-  eventCount?: number;
-  turnCount?: number;
-  stepCount?: number;
-  toolCalls?: number;
-  toolFailures?: number;
-  hasErrors?: boolean;
-  diagnostic?: string;
-}
-```
-
-新增 `GET /api/hitch-trajectory?run=<rear-run-id>`，只在用户打开 Compare 时读取选中的 1–4 条轨迹。canonical run 返回投影后的 `TrajectoryDocument`，legacy run 返回独立的 `LegacyTrajectoryDocument`。canonical 响应使用 ref SHA-256 作为 ETag；服务端以 `ref path + mtime + size + sha256` 缓存读取和投影结果。
-
-这样做避免每 10 秒刷新 overview 时，把所有 benchmark 的完整轨迹重复发送到浏览器。
-
-`HitchRun` 新增 `trajectory: HitchTrajectorySummary` 并移除 `events`。为减少 overview/breakdown 组件迁移面，现有 `usage`、`toolCalls`、`toolFailures` 可继续作为 run 级派生字段存在，但必须与 `trajectory` 来自同一次 canonical 投影，不能再读取旧控制日志。
-
-### 6.2 浏览器视图模型
-
-```ts
-interface TrajectoryDocument {
-  runId: string;
-  session: {
-    id: string;
-    createdAt: number;
-    cwd?: string;
-    fidelity: "native" | "normalized" | "minimal";
-    contractCommit: string;
-  };
-  summary: HitchTrajectorySummary;
-  turns: TrajectoryTurn[];
-  unmodeledEvents: RawSessionEvent[];
-}
-
-interface TrajectoryTurn {
-  turn: number;
-  startedAt: number | null;
-  completedAt: number | null;
-  status: "complete" | "aborted" | "error" | "unknown";
-  messages: TrajectoryRecord[];
-  steps: TrajectoryStep[];
-}
-
-interface TrajectoryStep {
-  step: number;
-  startedAt: number | null;
-  completedAt: number | null;
-  records: TrajectoryRecord[];
-}
-
-type TrajectoryRecord =
-  | SystemRecord
-  | UserRecord
-  | ContextRecord
-  | AssistantRecord
-  | ToolRecord
-  | DiagnosticRecord;
-```
-
-每条 record 必须包含稳定 id、原始 seq/source seq、开始/完成时间、状态、可搜索文本和 inspector 所需的原始块。建议 identity 分别使用 `system:<seq>`、`message:<seq>`、`assistant:<turn>:<step>`、`tool:<callId>`、`diagnostic:<seq>`；不得让 React row key 依赖当前过滤后的数组下标。未生成主 row 的 ignorable event 放入 `unmodeledEvents`，只在 session 级 Raw 面板展示。
-
-legacy detail 使用独立的 `LegacyTrajectoryDocument`/`LegacyTraceEvent` 返回和渲染，不进入 `TrajectoryDocument.turns`，也不复用 DSH timeline、duration 或 token 语义。
-
-### 6.3 canonical summary 的派生规则
-
-- `toolCalls`：`tool/call` 数量。
-- `toolFailures`：配对 `tool/result` 中 `isError === true` 或有 `data.error` 的数量。
-- usage：对最终 `assistant/message.data.usage` 按 token 字段求和；若 native chunk 只有 usage frame，则在所属 Assistant lifecycle 内累加。
-- `hasErrors`：turn error、失败的 tool result 或 error-level `hitch/diagnostic`。
-- run verifier/reward 继续来自 Harbor trial，不进入上述统计的事件集合。
-- `RunUsage.cost` 若 canonical 轨迹未提供 cost，显示 `—`，不能沿用或推算旧事件日志中的值。
-
-## 7. Event 到 Record 的投影
-
-| Session event | 投影行为 |
-| --- | --- |
-| `turn/start` | 创建 Turn bucket，保存开始时间。 |
-| `user/message` | `source.kind === "user"` 时创建 USER；其他来源创建 CONTEXT/DIAGNOSTIC 风格输入。根据当前 Turn/Step 位置放入 Message 或 Step。 |
-| `step/start` | 创建 Step bucket，并作为 Assistant request 的开始时间。 |
-| `request/header` | 创建或更新 SYSTEM/REQUEST 记录，保留 provider、model、system prompt 和 tools；空字段保持空，不伪造 catalog。 |
-| `assistant/chunk` | 更新当前 `(turn, step)` 的 block 状态、首 token 时间和 usage，不为每个 delta 建 row。 |
-| `assistant/message` | 完成一条 ASSISTANT record，保留 text、reasoning、tool-call block、provider/model、usage 与 interrupted 标记。最终 message 内容覆盖同一 lifecycle 的已组装文本。 |
-| `tool/call` | 以 `callId` 创建 running TOOL record，记录 name、arguments、turn、step 和开始时间。 |
-| `tool/result` | 与同一步的 call 合并，填充 output/error/完成时间；没有匹配 call 的 required result 使轨迹无效。 |
-| `step/end` | 冻结未完成但有可见内容的 Assistant；关闭 Step。没有可见内容时不生成空 Assistant row。 |
-| `turn/end` | 设置 Turn complete/aborted/error 状态和完成时间。 |
-| `hitch/diagnostic` | 创建默认隐藏的 DIAGNOSTIC row；level=error 参与错误筛选和 summary。 |
-| 其他 `ignorable: true` | 保存在“原始事件”详情中，默认不生成主 ledger row。 |
-| 未识别且非 ignorable | 将轨迹标记为 unsupported/invalid，不猜测语义。 |
-
-Hitch V1 的已知 required event 集合只有 Turn/Step、request、message、tool 等基本类型。DSH 当前 UI 中的 compaction、retry、nested code-dispatch 等能力不应在 P0 中提前实现；等 Hitch contract 明确允许后，再按 discriminant 增量扩展。
-
-### 7.1 时间和 token 语义
-
-- USER、SYSTEM 等瞬时记录的 duration 为 0。
-- ASSISTANT start 优先使用 `step/start.time`，end 使用最终 `assistant/message.time`。
-- TTFT 只在 `assistant/chunk` 提供首个 token delta 时计算。`normalized`/`minimal` 轨迹通常没有 chunk，UI 显示“未记录”，不能显示 0 ms。
-- TOOL duration 为 `tool/result.time - tool/call.time`。
-- running/缺失结束时间显示 `—`，不使用当前时间伪造耗时。
-- Step/Turn wall time分别来自其显式 start/end boundary。
-- timeline 内部使用 epoch ms；界面相对时间以第一条 event 为 `+0`，详情同时可查看本地时间和 Unix timestamp。
-
-## 8. Compare 页面交互
-
-### 8.1 页面结构
-
-保留现有 Compare heading、run summary、PhaseStrip 和 1–4 列网格。将每个 `.trace-lane` 内部替换为 `TrajectoryLane`：
+不渲染 ledger column header。每个普通 row 只有：
 
 ```text
-Run header + fidelity/format state
-Sticky toolbar
-Three-lane overview timeline
-Turn/Step ledger
-Shared record inspector
+[Turn/Request rails + role tag] [single-line content]
 ```
 
-三泳道沿用 DSH 语义：
+Tool row 的 content 使用 DSH 的双区布局：左侧 tool name + args，右侧 `→ result`；error result 使用 error token。窄 lane 下 role label 折叠为图标，tooltip 在图标 hover/focus 时出现。
 
-1. Input：SYSTEM、USER、CONTEXT、DIAGNOSTIC。
-2. Assistant：ASSISTANT。
-3. Tool：TOOL。
+## 8. Toolbar
 
-默认 overview 采用等宽 operation，用户可切换 actual duration。actual duration 下保留真实重叠关系；空闲时间采用压缩显示。P0 不暴露 DSH 当前隐藏的“完整 wall-clock idle gap”开关。
+每条 lane 独立渲染 DSH toolbar，顺序固定为：
 
-### 8.2 Toolbar
+1. `Duration`
+2. `Turns`
+3. `Calls`
+4. `Search`
 
-Compare grid 上方提供一组共享 toolbar，统一作用到当前所有 lane：
+`Actual time` control 与 DSH 一样保留在实现中但保持 hidden。
 
-- Duration 等宽/真实耗时切换。
-- 全部 Turn 折叠/展开。
-- Assistant 下 Tool call 折叠/展开。
-- 搜索；范围包含 summary、assistant text/reasoning、tool name/input/output 和 diagnostic。
-- 过滤：全部、Assistant、Tools、Errors。Verifier 不再作为 trajectory filter 项。
+- `Duration` 在 sequence/equal-width 与 recorded-duration/compressed-idle 之间切换。
+- duration preference 使用 DSH 的 browser-wide 语义；任一 lane 切换后所有 lane 同步反映。
+- `Turns` 折叠每个可折叠 Turn：保留第一条内容 row，再增加 `N steps · M tool calls` summary row。
+- `Calls` 只折叠紧跟在 Assistant 后面的 Tool/Subtool rows，summary 显示数量和 tool names。
+- 单个 Turn 可通过 DSH 相同的双击规则折叠/展开；单个 Assistant 的 calls 也使用相同双击规则。
+- Search 为大小写不敏感、空格分词、所有 term AND 匹配；范围与 DSH search index 一致。
+- 搜索期间 ledger 只保留命中 record，timeline 保留全域并降低未命中 span 的透明度；清空搜索后恢复原折叠状态。
 
-搜索和过滤只改变 ledger 可见 row，不改变原始 turn/step 编号、全局 record id、timeline 的基础 domain 或汇总指标。具体折叠集合仍按 run/record id 保存，避免同编号 Turn 在不同 lane 之间互相覆盖。
+删除当前 canonical toolbar 中的“全部 / 动作 / 错误”。同步滚动开关可保留在所有 lane 外的 REAR compare control 中。
 
-### 8.3 Ledger
+## 9. Overview timeline
 
-- Turn 用粗分隔线和 sticky header，Step 用紧凑 header。
-- 主 row 只展示 `# / Event / Content / Time`，适配 2–4 列窄屏比较。
-- token、cache、thinking、完整输入输出和 request options 放到 inspector；单条 run 打开时可在宽屏增加 Input/Output/Think 列。
-- Tool call/result 合成一行，running、success、error 使用不同状态；输出不能覆盖输入。
-- fidelity 显示在 lane header：`native`、`normalized`、`minimal`。minimal 模式缺少 tool/timing 时显示能力说明，不显示为“0 tools/0 ms”。
-- 没有可用 canonical trajectory 时使用明确 empty state：生成中、legacy、缺失、损坏或不支持版本。
+timeline 必须直接移植 `TrajectoryTimeline.tsx`、`timeline.ts` 和对应 CSS 的行为：
 
-### 8.4 Inspector
+- 三行固定为 `Input / Model / Tools`。
+- USER/SYSTEM/CONTEXT 位于 Input；ASSISTANT 位于 Model；TOOL 位于 Tools。
+- Turn boundary 是贯穿 timeline 的竖线。
+- Assistant 同时有 TTFT 和 decoding 时间时，span 使用两段渐变。
+- error span 使用 error color；当前 record 有独立 outline。
+- hover `500ms` 后显示 role、绝对时间、total duration，以及可用的 TTFT/Decoding。
+- 左键拖动建立 inclusive focus range；选区外 ledger row 降到 `0.24` opacity，不删除 row。
+- 点击 span 清除 range、选择对应 row、滚动到该 row 并打开 inspector。
+- 点击空白建立最小 range，并把最近 record 滚入视图。
+- wheel 以指针为锚缩放；右键拖动在已缩放域内平移。
+- 右键单击、双击或 `Escape` 清除 range；清除 range 不重置 zoom。
+- 无可投影数据时仍保留 toolbar/timeline，并显示 `No timing data`。
 
-选择任意 row 后，打开一个跨 compare grid 的共享右侧 drawer，标题包含 run/harness、Turn、Step、record type 和 seq。避免在四条 lane 内分别打开局部 panel 压缩内容。
+REAR 多 lane 不共享 timeline zoom、range、hover 或 selected record；这些状态与 DSH 一样属于单条 trajectory view。
 
-按 record 类型提供：
+## 10. Ledger
 
-- SYSTEM/REQUEST：Summary、Options、System Prompt、Tools、Raw。
-- USER/CONTEXT：Rendered、Raw、Source。
-- ASSISTANT：Output、Thinking、Source、Usage、Timing、Options。
-- TOOL：Input、Output、Error、Schema、Timing、Raw。
-- DIAGNOSTIC：Message、Raw。
+### 10.1 Row 类型与颜色
 
-不存在的数据展示“未记录”，不构造空对象冒充 provider 数据。图片块只允许 `data:image/*`、`blob:`、`http:`、`https:`；其他 scheme 作为文本显示。
+角色闭集及颜色语义与 DSH 一致：
 
-### 8.5 Compare 特有行为
+- SYSTEM：neutral
+- USER：business blue
+- CONTEXT：success green
+- ASSISTANT：violet/red mix
+- TOOL：amber
+- ERROR：状态覆盖为 red，但不改变原 role
 
-- 保留“同步滚动”开关。P0 继续使用每条 ledger 的滚动比例同步；选中记录和 timeline 范围按 lane 独立，toolbar query/filter/action 由 Compare 统一分发。
-- 点击 overview span 要选择并滚动到对应 ledger row；拖选时间范围只保留与范围相交的记录；右键清除范围。
-- verifier reward、trial exception、environment/agent/verifier phase 仍在 run summary 或独立 banner 中展示，不注入 ledger。
-- `buildInsights` 改为读取 `trajectory.summary` 和 run 状态，不再扫描已删除的 `run.events`。
+当前 Hitch contract 尚无 COMPACTED/SUBTOOL 时不得制造这两类 row；adapter 接口保留扩展位。
 
-## 9. 性能与状态
+### 10.2 Turn 与 Request
 
-- Compare 打开前不加载完整轨迹。
-- 最多并发请求当前选中的 4 条轨迹；离开 Compare 时取消未完成请求。
-- ledger 使用 `@tanstack/react-virtual`，只挂载可见窗口和小量 overscan；DOM row 数量不随总事件数线性增长。
-- row height 以稳定 record id 缓存；assistant 流式内容不是 P0，completed artifact 不需要频繁重测。
-- 搜索索引按 record id 构建，并与投影 cache 一起复用。
-- completed trajectory 由 hash 标识为 immutable；10 秒 overview 自动刷新不重复读取未变化文件。
-- 若保留 system prompt diff，可使用 `diff` 包；不要把 DSH primitives 或完整 UI 包作为依赖引入。
+- 每个 Turn 第一条普通 record 左上显示 `Turn N`；lane ≤ `620px` 时显示 `#N`。
+- Turn 之间使用 `2px` rule，选中 Turn 显示贯穿 rows 的 rail。
+- 每个 Assistant request 在对应 row 左侧显示圆点 marker，hover/focus 显示 `Request #N`。
+- 连续重试或重合 request marker 按 `8px` 水平偏移排列。
+- marker 可独立选中 Request inspector，不等同于选中普通 row。
+- Step 不额外占一行；它通过 request marker 和 inspector 中的 `Turn N · Step N` 表达。
 
-## 10. 文件级改动建议
+### 10.3 Selection 与滚动
 
-| 文件/目录 | 修改 |
+- row click 或键盘 `Enter`/`Space` 选中 record 并打开本 lane inspector。
+- selection rail 为 `3px`；error record 使用 error color。
+- 打开由 timeline/call link 指定的 record 时，必须自动展开其 Turn/Calls 并居中滚动。
+- completed artifact 初次打开按 DSH 行为定位到 ledger tail；用户向上滚动后不得被状态刷新拉回尾部。
+- 超过 100 records 使用 `@tanstack/react-virtual`；stable key、ARIA row index、折叠 summary height 和滚动锚点逻辑与 DSH 一致。
+
+## 11. Local inspector
+
+Inspector 必须位于被选中 lane 的 `TrajectoryTableSplit` 内，不使用 Compare 级 drawer。
+
+- 宽 lane：右侧 split pane。
+- lane ≤ `760px`：覆盖在该 lane 右侧，宽度 `min(92%, 420px)`。
+- 左边缘可拖动 resize；双击恢复默认；键盘左右键以 `16px` 调整。
+- 点击关闭按钮只关闭 inspector，不清除 timeline zoom。
+- inspector header 显示 role/request、`Turn N · Step N` location；普通 record 与 Request marker 使用不同标题。
+
+Tabs 与 DSH 基线一致：
+
+| 选择对象 | Tabs |
 | --- | --- |
-| `lib/hitch-types.ts` | 从 `HitchRun` 删除 `events`；增加 trajectory availability/summary/document 类型。旧 `TraceEvent` 改名为 `LegacyTraceEvent`，只给 legacy detail 使用。 |
-| `lib/hitch-scanner.ts` | 停止把 `hitch-events.jsonl` 作为新轨迹事实来源；发现 ref，生成轻量 summary，保留 legacy 检测。 |
-| `lib/trajectory/dsh-contract.ts` | Hitch V1 ref/header/event 的最小类型、supported-contract registry 和判别函数。 |
-| `lib/trajectory/dsh-reader.ts` | JSONL、hash、路径、seq 和关系不变量校验。 |
-| `lib/trajectory/dsh-projector.ts` | Event lifecycle -> `TrajectoryDocument` 的纯函数。 |
-| `lib/trajectory/cache.ts` | 以 path/mtime/size/hash 缓存 reader/projector 结果。 |
-| `build/hitch-data-plugin.ts` | 从 `vite.config.ts` 提取本地 API；实现 summary 与单-run trajectory endpoint。 |
-| `vite.config.ts` | 注册提取后的 local data plugin；不增加 hosted filesystem API。 |
-| `app/rear-dashboard.tsx` | 移除 canonical 路径对 `EventCard` 和 `run.events` 的使用；接入新的 `TrajectoryCompare`。 |
-| `app/trajectory/*` | Lane、Toolbar、Timeline、Ledger、Turn/Step header、Inspector、loading/error state，以及隔离的 `LegacyEventList`。 |
-| `app/trajectory/*.module.css` | 新轨迹 UI 样式；避免继续扩大单一 `globals.css`。 |
-| `package.json` | 增加 `@tanstack/react-virtual`；仅在实现 prompt diff 时增加 `diff`。 |
-| `tests/fixtures/trajectory/*` | native/normalized/minimal/legacy/invalid JSONL fixtures。 |
-| `tests/*` | reader、projector、API、组件与 SSR shell 覆盖。 |
+| Initial SYSTEM | `System Prompt`, `Tools` |
+| Updated SYSTEM | `Diff`, `System Prompt`, `Tools` |
+| USER / CONTEXT / ASSISTANT | `Summary`, `Preview`, `Raw`，有 source 时再加 `Source` |
+| TOOL | `Summary`，有值时加 `Payload` / `Result`，始终有 `Schema`, `Timing` |
+| Request marker | `Summary`，有 config 时加 `Options`，以及 `Usage`, `Timing` |
 
-本项目含 `.openai/hosting.json`，但此次仍保持现有 vinext/Sites 构建结构和 local-only 数据读取，不新增 D1/R2 绑定，也不把本机轨迹上传到托管环境。
+Assistant Summary 必须展示 rendered output、可折叠 Thinking、tool-call links、images、token 和 timing。Tool Summary 必须同时保留 payload/result，不允许 output 覆盖 input。单 text JSON result 使用 JSON tree；普通文本保持 pre-wrap；Markdown 内容在 Preview 中渲染。
 
-## 11. 实施顺序
+图片仅允许 DSH/REAR 已认可的安全 scheme；不安全 URL 作为文本展示。不存在的数据使用 DSH 对应文案（如 `Usage not reported`、`Schema unavailable`、`Not recorded`），不得构造空对象。
 
-### Phase 0：数据可达性
+## 12. REAR Compare 集成
 
-- Hitch Harbor bridge 导出 ref/session artifact。
-- 用一条新 Harbor trial 验证宿主机上 ref、session、hash、run/session id 一致。
+- Compare heading、strict/exploratory banner、insights、run summaries 和 Canonical/Provider tabs 保留。
+- `.trace-lane > header` 保留为 REAR lane 标识；其下不再有 `.trace-scroll`/`.event-card`，而是固定高度的 DSH surface。
+- 1 条 run 使用可用全宽；2–4 条 run 继续横向 grid/scroll。每条 lane 最小宽度不小于 `300px`，DSH 的 `620px`/`760px` responsive 行为改为 lane container query。
+- `同步滚动` 仅同步各 lane 的 ledger table pane，继续使用比例同步；不得同步 inspector、timeline zoom、range、search、fold 或 selection。
+- Provider Evidence 仍使用现有 REAR panel，不套 DSH trajectory UI。
+- canonical 为 missing/pending/raw_only/corrupt/unsupported 时，在 lane 内显示 REAR empty state，不创建假的 DSH records。
 
-### Phase 1：reader 与 summary 迁移
+## 13. 源码移植策略
 
-- 增加格式校验、路径约束、投影 cache。
-- `HitchRun` 改为 trajectory summary，移除完整 `events` payload。
-- 新增按 run 懒加载 endpoint。
-- 保留显式 legacy fallback。
+不得依赖发布包 `@deepseek-ai/dsh-client-ui-trajectory`，因为它要求 Cordis、DSH runtime、locale/slot 和 conversation shell。采用固定 commit 的源码移植：
 
-### Phase 2：DSH 风格 ledger 与 inspector
+```text
+app/trajectory/dsh/
+  TrajectoryView.tsx
+  TrajectoryToolbar.tsx
+  TrajectoryTimeline.tsx
+  TrajectoryTable.tsx
+  layout.ts
+  timeline.ts
+  trajectory-record.ts
+  trajectory-search-index.ts
+  trajectory-virtual-rows.ts
+  *.module.css
+```
 
-- 完成 Turn/Step/Assistant/Tool 生命周期投影。
-- 替换 EventCard，接入共享 inspector。
-- verifier、trial error 和 phase 保持在会话外。
+要求：
 
-### Phase 3：overview、搜索与大轨迹性能
+- 尽量保留 DSH 文件名、函数名、常量值和测试描述，便于后续与 upstream diff。
+- 在目录 README 中记录 upstream repo、commit、package version、MIT license 和本地差异白名单。
+- 复制 DSH dark-theme 所需 token 子集到该 surface 的 scoped token 文件，不把颜色改写成 REAR `--accent`。
+- primitives 放在 `app/trajectory/dsh/primitives/`，禁止把展示逻辑重新塞回 `app/rear-dashboard.tsx`。
 
-- 三泳道 timeline、duration 切换、范围选择。
-- Turn/Call 折叠、搜索索引、虚拟列表。
-- 补齐 1–4 lane 响应式与键盘操作。
+## 14. 文件级改动
 
-## 12. 测试要求
+| 文件 | 修改 |
+| --- | --- |
+| `lib/hitch-types.ts` | 删除 `CanonicalLedgerRecord`；canonical detail 改为 header + summary + events；增加最小 DSH adapter types。 |
+| `lib/hitch/canonical-session.ts` | 保留 raw validated events；删除 `projectLedger`；修正 Assistant TTFT 为 step-start 语义。 |
+| `lib/hitch/trajectory-detail.ts` | 返回新的 canonical document，ETag 行为不变。 |
+| `app/rear-dashboard.tsx` | 删除 `EventCard` 和 canonical event filters；挂载 `TrajectoryCompare`。 |
+| `app/trajectory/TrajectoryCompare.tsx` | REAR lane header、empty state、同步滚动和 DSH surface 编排。 |
+| `app/trajectory/dsh/*` | 固定 DSH commit 的 UI、layout、timeline、search、virtualization 源码移植。 |
+| `app/trajectory/dsh-adapter.ts` | Session events -> DSH snapshot 的纯投影。 |
+| `app/trajectory/dsh-theme.css` | DSH dark theme token 子集，限定在 trajectory surface。 |
+| `app/globals.css` | 删除 `.event-card` 路径样式，只保留 compare outer shell。 |
+| `package.json` | 增加 `@tanstack/react-virtual` 和 prompt diff 所需 `diff`。 |
+| `tests/trajectory/*` | adapter/layout/timeline/table/inspector parity tests 与 fixtures。 |
 
-### Reader/contract
+## 15. 测试要求
 
-- 正常 normalized、native、minimal ref/session。
-- bad header/version/commit、重复或跳号 seq、非法 JSON、hash mismatch。
-- 未闭合 Turn/Step、重复 call、跨 Step result、未配对 result。
-- ref 路径逃逸 trial/run root。
-- canonical 存在但损坏时不回退 legacy。
+### 15.1 Adapter parity
 
-### Projector
+使用同一 session fixture 对比 DSH 基线投影与 REAR adapter：
 
-- 多 Turn、多 Step、多个 assistant/tool lifecycle。
-- chunk + final message 去重，final message 为权威内容。
-- 无 chunk 时 TTFT 为 null。
-- tool success/error/interrupted duration 和状态。
-- usage 累加、reasoning/cache 字段缺失与存在。
-- ignorable event 默认隐藏但 Raw 可见；unknown required 失败。
-- verifier 和 Harbor exception 不进入 `TrajectoryDocument.turns`。
+- 多 Turn、多 Step、steering input。
+- initial/update request header、prompt/tool catalog、request config。
+- chunk + final Assistant、reasoning、tool-call-only Assistant。
+- Tool success/error、JSON/text/image result、缺失 schema。
+- 缺失 chunk/usage/timing 时的 unknown 语义。
+- unknown ignorable 与 unknown required event。
 
-### API/cache
+必须断言 Turn、group、record kind、stable id、content、duration、usage、request number 和 error state 一致。
 
-- summary 不含完整 record/event 数组。
-- detail 只能按已索引 REAR run id 读取。
-- ETag/304、文件变化后 cache 失效、4 条请求并发。
-- pending、legacy、missing、invalid、unsupported 状态可区分。
+### 15.2 组件 parity
 
-### UI
+从 DSH `ui-trajectory/tests` 移植与 P0 事件集有关的测试，至少覆盖：
 
-- 1、2、4 lane 均可渲染。
-- Search/filter/fold 不改变 record id 和 inspector 目标。
-- timeline 点击/拖选能定位和聚焦 ledger。
-- keyboard 可操作 toolbar、row、drawer tabs 和关闭按钮。
-- 虚拟列表的挂载 row 数量受 viewport/overscan 限制。
-- normalized/minimal 缺失 TTFT、schema、cost 时显示“未记录”而不是 0。
+- toolbar 顺序和 local state。
+- Turn/Calls 单个及全局折叠。
+- 搜索 AND 语义、清空恢复、timeline dimming。
+- timeline drag/click/zoom/pan/reset/tooltip。
+- row 与 Request marker selection。
+- inspector tabs、resize、parent/call navigation。
+- >100 rows virtualization、stable ARIA index 和 tail follow。
+- running 与 error 状态不覆盖 role。
 
-## 13. 验收标准
+### 15.3 Visual regression
 
-1. 一条新 Harbor eval 完成后，Compare 页面读取 `hitch-trajectory.session.jsonl`，而不是 `hitch-events.jsonl`。
-2. UI 的 Turn、Step、Assistant、Tool 数量与 canonical session 一致；Tool input/output 和失败状态能在同一 record 中检查。
-3. 运行摘要的 token/tool/error 指标从 canonical session 派生；reward/verifier 仍来自 Harbor。
-4. normalized/minimal 缺失的 TTFT、tool schema、cost 等字段不被伪造成 0。
-5. canonical hash 或结构校验失败时，lane 明确显示损坏原因且不回退旧日志。
-6. `/api/hitch-data` 不再携带所有 run 的完整轨迹；只在打开 Compare 后加载选中 run。
-7. 同时比较 4 条长轨迹时，ledger DOM 数量受虚拟窗口限制，搜索、折叠和 inspector 仍可用。
-8. 历史 run 只有 `hitch-events.jsonl` 时明确标为 Legacy；新 run 不使用 legacy parser。
-9. 本机路径不能通过 API 参数或恶意 ref 逃出所选 Hitch data root。
-10. `npm run build`、reader/projector 单元测试、API 测试和现有 SSR shell 测试通过。
+建立 deterministic fixture，并分别在 DSH reference app 与 REAR 中截取只包含 trajectory surface 的截图：
 
-## 14. 后续能力
+- 单 lane：`1280 × 720`。
+- 单 lane 窄态：`600 × 720`。
+- Tool inspector 打开态。
+- Request inspector 打开态。
+- timeline selection + search + collapsed calls 态。
 
-以下能力等 Hitch contract 正式纳入对应事件后再做：
+验收优先检查 DOM 结构、尺寸、字体、颜色 token、row 密度和交互状态；REAR 外层 lane header 不进入 DSH crop。
 
-- compaction request/summary/end 展示。
-- `llm/retry` request lifecycle。
-- `tool/code-dispatch*` nested subtool tree。
-- subagent session/lineage 导航。
-- finalized artifact 之外的 live incremental trajectory。
-- 基于 `(turn, step, record kind)` 的跨 lane 语义对齐，替代滚动比例同步。
+### 15.4 回归
+
+- `/api/hitch-data` 不携带完整 events。
+- canonical endpoint 的 ETag/304、run-id/path 安全校验不退化。
+- Provider Evidence、Overview、Breakdown、strict comparison 不受影响。
+- `npm run build`、`npm run lint`、现有 run-centered tests 和新增 trajectory tests 全部通过。
+
+## 16. 验收标准
+
+1. canonical lane 中不存在 `.event-card`、事件圆点竖线卡片或“全部 / 动作 / 错误”过滤器。
+2. lane 内依次出现 DSH toolbar、`Input / Model / Tools` timeline 和 30px dense ledger。
+3. Tool call/result 是同一 row，显示 `args → result`；失败仍是 TOOL role，同时具有 error 状态。
+4. Assistant chunks 不单独成行；同一 step 只产生一个 Assistant lifecycle row。
+5. Turn、Request marker、折叠 summary、搜索和 timeline focus 行为通过从 DSH 移植的 parity tests。
+6. 点击 row 在该 lane 内打开可调宽 inspector；不存在 Compare 级共享 drawer。
+7. Inspector tabs、字段缺失文案、Markdown/JSON/image 展示与 DSH 基线一致。
+8. TTFT 使用 step start 到 first token；无 chunk 时显示 unknown，不显示 `0ms`。
+9. 1、2、4 lanes 均可操作；窄 lane 使用 DSH compact role icon 和 lane-local overlay inspector。
+10. 长轨迹只挂载 virtual window；搜索、折叠、选中与滚动不因 prepend/refresh 改变 stable identity。
+11. DSH reference 与 REAR trajectory surface 的 visual regression 无未批准结构差异。
+12. 现有构建、数据完整性、安全和 Provider Evidence 测试全部通过。
+
+## 17. 实施顺序
+
+1. 用 raw validated events 替换扁平 `CanonicalLedgerRecord[]` response。
+2. 移植 DSH event definitions/snapshot/layout，并完成 adapter parity tests。
+3. 移植 Toolbar、Timeline、Table、Inspector、tokens 和 primitives。
+4. 在 Compare 中替换 EventCard 路径，接入 lane-local state 与 ledger-only 同步滚动。
+5. 移植 DSH 组件 tests，补 visual regression 和 1/2/4 lane 回归。
+
+完成第 2 步之前不得先做“看起来像 DSH”的临时卡片样式；该临时实现不会进入主分支。

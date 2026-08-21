@@ -11,6 +11,7 @@ import type {
   RunObservationV1,
   RunRecordV1,
 } from "../hitch-types";
+import { effectiveModelIdentity } from "./model-identity";
 import { loadTrajectory, type TrajectoryLoadResult } from "./trajectory-ref";
 import {
   RUN_ID_PATTERN,
@@ -304,7 +305,7 @@ export function loadRun(runDirectory: string): LoadedRun {
     completedAt: run.completed_at || null,
     taskKey: taskKey(run),
     harnessKey: canonicalJson(run.harness),
-    modelKey: canonicalJson(run.model),
+    modelKey: canonicalJson(effectiveModelIdentity(run.model)),
     strictMetricEligible:
       run.context.kind === "benchmark_task"
       && observationValue.state === "valid"

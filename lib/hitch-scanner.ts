@@ -9,6 +9,7 @@ import type {
   TaskIdentitySummary,
 } from "./hitch-types";
 import { parseEvalResult, trialMatchesRun, type LoadedEval } from "./hitch/eval-record";
+import { modelIdentityLabel } from "./hitch/model-identity";
 import { isTerminal, loadRun, type LoadedRun } from "./hitch/run-record";
 import { RUN_ID_PATTERN, canonicalJson, compactError, readJsonFile } from "./hitch/validation";
 
@@ -83,12 +84,10 @@ function loadEval(directory: string): LoadedEval {
 }
 
 function modelIdentity(run: HudRunSummary): DisplayIdentitySummary {
-  const provider = run.model.provider ? `${run.model.provider}/` : "";
   const unresolved = run.model.identity_resolved !== true;
-  const parameters = run.model.parameters_sha256 ? ` · params ${run.model.parameters_sha256.slice(7, 15)}` : "";
   return {
     key: run.modelKey,
-    label: `${provider}${run.model.effective_id}${parameters}${unresolved ? " · unresolved" : ""}`,
+    label: modelIdentityLabel(run.model, { includeParameters: true }),
     unresolved,
   };
 }
