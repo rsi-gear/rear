@@ -1,10 +1,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
-import { findIndexedRun, scanHitch } from "../lib/hitch-scanner";
+import { findIndexedRun, scanHitch, unconfiguredHitchSnapshot } from "../lib/hitch-scanner";
 import { canonicalDetail, providerDetail } from "../lib/hitch/trajectory-detail";
 import { RUN_ID_PATTERN } from "../lib/hitch/validation";
-
-const DEFAULT_ROOT = "/Users/tangyehui/agent-hitch/.hitch";
 
 function json(response: ServerResponse, status: number, value: unknown, headers: Record<string, string> = {}): void {
   response.statusCode = status;
@@ -22,10 +20,11 @@ export function hitchDataPlugin(): Plugin {
     name: "hitch-run-centered-data",
     apply: "serve",
     configureServer(server) {
-      const root = () => process.env.HITCH_DATA_ROOT || DEFAULT_ROOT;
+      const root = () => process.env.HITCH_DATA_ROOT?.trim() || null;
       server.middlewares.use("/api/hitch-data", (_request, response) => {
         try {
-          json(response, 200, scanHitch(root()), { "Cache-Control": "no-store" });
+          const configuredRoot = root();
+          json(response, 200, configuredRoot ? scanHitch(configuredRoot) : unconfiguredHitchSnapshot(), { "Cache-Control": "no-store" });
         } catch (error) {
           json(response, 500, { error: error instanceof Error ? error.message : "Unable to read Hitch data" });
         }
@@ -36,7 +35,9 @@ export function hitchDataPlugin(): Plugin {
           const runId = url.searchParams.get("run") || "";
           const view = url.searchParams.get("view");
           if (!RUN_ID_PATTERN.test(runId)) return json(response, 400, { error: "invalid run id" });
-          const run = findIndexedRun(root(), runId);
+          const configuredRoot = root();
+          if (!configuredRoot) return json(response, 503, { error: "HITCH_DATA_ROOT is not configured" });
+          const run = findIndexedRun(configuredRoot, runId);
           if (!run) return json(response, 404, { error: "run is not indexed" });
           if (view === "canonical") {
             const detail = canonicalDetail(run);

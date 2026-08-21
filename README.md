@@ -3,8 +3,8 @@
 **Runtime Experience Analysis & Replay**
 
 REAR is a local analysis and replay workspace for agent runtime evidence. It
-reads Hitch's persisted Harbor evals, groups results by benchmark, and lets you
-pivot between model and harness views.
+reads Hitch's run-centered store, validates run/eval/trajectory integrity,
+groups results by benchmark, and lets you pivot between model and harness views.
 
 ## Features
 
@@ -20,18 +20,15 @@ pivot between model and harness views.
 
 ```bash
 npm install
-npm run dev
+HITCH_DATA_ROOT=/path/to/hitch-data npm run dev
 ```
 
 The dashboard is available at `http://localhost:3000/`.
 
-By default, the local data endpoint reads:
-
-```text
-/Users/tangyehui/agent-hitch/.hitch
-```
-
-Use another Hitch root by setting `HITCH_DATA_ROOT` before starting the service.
+`HITCH_DATA_ROOT` must point to the Hitch state root containing `runs/` and
+`evals/`. REAR deliberately has no machine-specific fallback. When the variable
+is missing, the dashboard stays empty and reports
+`hitch_data_root_not_configured`.
 
 ## Verification
 

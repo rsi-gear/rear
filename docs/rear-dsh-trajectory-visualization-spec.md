@@ -2,7 +2,7 @@
 
 状态：Proposed  
 日期：2026-08-21  
-范围：`/Users/tangyehui/rear`，另含一个必须先满足的 Hitch 评测产物导出前置条件
+范围：`<REAR_REPOSITORY_ROOT>`，另含一个必须先满足的 Hitch 评测产物导出前置条件
 
 ## 1. 背景与基线
 

@@ -4,7 +4,7 @@
 - 日期：2026-08-21
 - Hitch 基线：`feat/run-centered-trajectory-storage-spec@ec27225`
 - Hitch 对比基线：`dev@fe4453a`
-- REAR 范围：`/Users/tangyehui/rear`
+- REAR 范围：`<REAR_REPOSITORY_ROOT>`
 - 支持目标：RunRecord V1、EvalResult V1、TrajectoryRef V2
 
 ## 1. 结论

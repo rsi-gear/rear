@@ -6,7 +6,7 @@ import path from "node:path";
 import test from "node:test";
 import { parseCanonicalSession } from "../lib/hitch/canonical-session";
 import { parseTrajectoryRefV2 } from "../lib/hitch/trajectory-ref";
-import { scanHitch } from "../lib/hitch-scanner";
+import { scanHitch, unconfiguredHitchSnapshot } from "../lib/hitch-scanner";
 import { compareRunSummaries } from "../lib/hitch/strict-comparison";
 
 const digestA = `sha256:${"a".repeat(64)}` as const;
@@ -208,6 +208,13 @@ test("running evals stay eval-level pending and do not fabricate task runs", asy
   const snapshot = scanHitch(root);
   assert.equal(snapshot.runs.length, 0);
   assert.ok(snapshot.diagnostics.some((item) => item.code === "eval_pending_runs" && item.severity === "pending"));
+});
+
+test("unconfigured stores expose no local path and return an explicit diagnostic", () => {
+  const snapshot = unconfiguredHitchSnapshot();
+  assert.equal("root" in snapshot, false);
+  assert.equal(snapshot.runs.length, 0);
+  assert.equal(snapshot.diagnostics[0].code, "hitch_data_root_not_configured");
 });
 
 test("same task id with different digest or verifier remains separate", async () => {

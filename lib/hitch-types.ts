@@ -242,7 +242,6 @@ export interface HitchDiagnostic {
 export interface HitchSnapshot {
   schemaVersion: "run-centered-v1";
   generatedAt: string;
-  root: string;
   benchmarks: HitchBenchmark[];
   runs: HudRunSummary[];
   diagnostics: HitchDiagnostic[];

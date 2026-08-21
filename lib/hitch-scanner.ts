@@ -169,7 +169,6 @@ export function scanHitch(root: string): HitchSnapshot {
     return {
       schemaVersion: "run-centered-v1",
       generatedAt: new Date().toISOString(),
-      root,
       benchmarks: [],
       runs: [],
       diagnostics: [diagnostic(
@@ -262,10 +261,25 @@ export function scanHitch(root: string): HitchSnapshot {
   return {
     schemaVersion: "run-centered-v1",
     generatedAt: new Date().toISOString(),
-    root,
     benchmarks: buildBenchmarks(summaries),
     runs: summaries,
     diagnostics,
+  };
+}
+
+export function unconfiguredHitchSnapshot(): HitchSnapshot {
+  return {
+    schemaVersion: "run-centered-v1",
+    generatedAt: new Date().toISOString(),
+    benchmarks: [],
+    runs: [],
+    diagnostics: [diagnostic(
+      "hitch_data_root_not_configured",
+      "warning",
+      "store",
+      null,
+      "未配置 HITCH_DATA_ROOT；REAR 不会猜测本机 Hitch 数据目录。",
+    )],
   };
 }
 
