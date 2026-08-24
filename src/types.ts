@@ -1,0 +1,356 @@
+/**
+ * Client-safe refinement identities, records, evidence projections, and Remote results.
+ * @module dsh-plugin-rear/types
+ */
+
+import type { Branded } from '@deepseek-ai/dsh-brand'
+import type { SessionHeader, SessionId } from '@deepseek-ai/dsh-session/types'
+
+/** Identifies one DSH-owned refinement. */
+export type RefinementId = Branded<'RefinementId'>
+/** Identifies one ordered refinement iteration. */
+export type RefinementIterationId = Branded<'RefinementIterationId'>
+/** Identifies one candidate inside a refinement lineage. */
+export type RefinementCandidateId = Branded<'RefinementCandidateId'>
+/** Identifies one Hitch evaluation without exposing its storage location. */
+export type HitchEvalId = Branded<'HitchEvalId'>
+/** Identifies one Hitch run without exposing its storage location. */
+export type HitchRunId = Branded<'HitchRunId'>
+/** Equality-only token replaced by every material record mutation. */
+export type RefinementVersion = Branded<'RefinementVersion'>
+/** Equality-only invalidation token carried by change notifications. */
+export type RefinementChangeToken = Branded<'RefinementChangeToken'>
+
+/** Exact persisted Session lifecycle that owns a refinement. */
+export interface RefinementSessionIdentity {
+  readonly sessionId: SessionId
+  readonly createdAt: number
+  readonly cwd?: string
+}
+
+/** Durable refinement lifecycle. */
+export type RefinementStatus =
+  | 'queued'
+  | 'running'
+  | 'awaiting-review'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+
+/** Stable machine failure retained on a refinement or iteration. */
+export interface RefinementFailure {
+  readonly code: string
+  readonly message: string
+}
+
+/** One candidate and its requested revision lineage. */
+export interface RefinementCandidateRecord {
+  readonly id: RefinementCandidateId
+  readonly role: 'baseline' | 'candidate'
+  readonly parentCandidateId: RefinementCandidateId | null
+  readonly requestedHarnessRef: string
+  readonly revisionIdentity: string | null
+  readonly label: string
+  readonly createdAt: number
+}
+
+/** One authoritative Hitch evaluation reference associated by a driver. */
+export interface RefinementEvaluationRef {
+  readonly providerId: string
+  readonly evalId: HitchEvalId
+  readonly candidateId: RefinementCandidateId
+  readonly requestedModelId: string
+  readonly benchmarkId: string
+  readonly benchmarkRevision: string
+}
+
+/** One ordered candidate-generation and evaluation interval. */
+export interface RefinementIterationRecord {
+  readonly id: RefinementIterationId
+  readonly ordinal: number
+  readonly status: 'preparing' | 'evaluating' | 'settled' | 'failed' | 'cancelled'
+  readonly candidateIds: readonly RefinementCandidateId[]
+  readonly evaluationRefs: readonly RefinementEvaluationRef[]
+  readonly createdAt: number
+  readonly completedAt?: number
+  readonly failure?: RefinementFailure
+}
+
+/** Complete DSH-owned sidecar state for one refinement. */
+export interface RefinementRecordV1 {
+  readonly schemaVersion: 1
+  readonly id: RefinementId
+  readonly session: RefinementSessionIdentity
+  readonly objective: string | null
+  readonly driver: {
+    readonly id: string
+    readonly operationId: string | null
+  }
+  readonly evidenceProviderId: string
+  readonly status: RefinementStatus
+  readonly baselineCandidateId: RefinementCandidateId | null
+  readonly activeIterationId: RefinementIterationId | null
+  readonly candidates: readonly RefinementCandidateRecord[]
+  readonly iterations: readonly RefinementIterationRecord[]
+  readonly createdAt: number
+  readonly updatedAt: number
+  readonly completedAt?: number
+  readonly failure?: RefinementFailure
+  readonly version: RefinementVersion
+}
+
+/** Lightweight record returned by list. */
+export interface RefinementSummary {
+  readonly id: RefinementId
+  readonly objective: string | null
+  readonly status: RefinementStatus
+  readonly activeIterationId: RefinementIterationId | null
+  readonly iterationCount: number
+  readonly createdAt: number
+  readonly updatedAt: number
+  readonly version: RefinementVersion
+  readonly failure?: RefinementFailure
+}
+
+/** One run projected from authoritative evaluation evidence. */
+export interface RefinementRunView {
+  readonly id: HitchRunId
+  readonly evalId: HitchEvalId
+  readonly candidateId: RefinementCandidateId
+  readonly trialId: string
+  readonly attempt: number
+  readonly taskKey: string
+  readonly taskId: string
+  readonly execution: 'queued' | 'preparing' | 'running' | 'succeeded' | 'failed' | 'timed-out' | 'cancelled'
+  readonly observation: { readonly state: 'pending' } | { readonly state: 'valid'; readonly reward: number } | { readonly state: 'invalid'; readonly reason: string }
+  readonly integrity: 'valid' | 'pending' | 'corrupt'
+  readonly harness: { readonly requestedRef: string; readonly id: string; readonly revisionIdentity: string | null }
+  readonly model: { readonly requestedId: string; readonly provider: string | null; readonly effectiveId: string | null }
+  readonly protocolIdentity: string
+  readonly trajectory: {
+    readonly availability: 'available' | 'provider-only' | 'pending' | 'missing' | 'corrupt' | 'unsupported'
+    readonly hasCanonical: boolean
+    readonly providerFileCount: number
+    readonly summary?: {
+      readonly turnCount?: number
+      readonly toolCalls?: number
+      readonly inputTokens?: number
+      readonly outputTokens?: number
+      readonly ttftMs?: number
+    }
+  }
+  readonly startedAt?: number
+  readonly completedAt?: number
+}
+
+/** One Hitch evaluation projection with all attempts retained. */
+export interface RefinementEvaluationProjection {
+  readonly ref: RefinementEvaluationRef
+  readonly status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'corrupt'
+  readonly plannedTasks: number | null
+  readonly settledTasks: number
+  readonly runs: readonly RefinementRunView[]
+  readonly diagnostics: readonly RefinementFailure[]
+}
+
+/** Dimension fixed by a strict comparison. */
+export type RefinementComparisonDimension = 'harness' | 'model'
+
+/** Stable reason why evidence cannot support a strict conclusion. */
+export interface RefinementComparisonExclusion {
+  readonly runId: HitchRunId
+  readonly code: string
+}
+
+/** One task aggregate preserving every underlying attempt. */
+export interface RefinementTaskComparison {
+  readonly taskKey: string
+  readonly taskId: string
+  readonly referenceRunIds: readonly HitchRunId[]
+  readonly candidateRunIds: readonly HitchRunId[]
+  readonly referenceMean: number | null
+  readonly candidateMean: number | null
+  readonly delta: number | null
+  readonly status: 'regressed' | 'invalid' | 'improved' | 'unchanged' | 'pending'
+}
+
+/** Host-owned strict or exploratory comparison result. */
+export interface RefinementStrictComparisonResult {
+  readonly strict: boolean
+  readonly dimension: RefinementComparisonDimension
+  readonly referenceRunId: HitchRunId | null
+  readonly exclusions: readonly RefinementComparisonExclusion[]
+  readonly tasks: readonly RefinementTaskComparison[]
+}
+
+/** Evaluation response versioned independently from the DSH record. */
+export interface RefinementEvaluationView {
+  readonly evidenceVersion: string
+  readonly evaluations: readonly RefinementEvaluationProjection[]
+  readonly comparison: RefinementStrictComparisonResult
+}
+
+/** JSON value retained across the canonical artifact Remote boundary. */
+export type RefinementJsonValue = null | boolean | number | string | RefinementJsonValue[] | { [key: string]: RefinementJsonValue }
+
+/** JSON-safe event envelope projected from one validated Session artifact. */
+export interface CanonicalTrajectoryEvent {
+  readonly type: string
+  readonly seq: number
+  readonly time: number
+  readonly data: RefinementJsonValue
+  readonly ignorable?: true
+  readonly sourceEventSeqs?: readonly number[]
+  readonly surfaceOp?: 'append' | { readonly op: 'replace'; readonly start: number; readonly end: number }
+}
+
+/** Canonical completed Session document used by an offline Trajectory surface. */
+export interface CanonicalTrajectoryDocument {
+  readonly runId: HitchRunId
+  readonly header: SessionHeader
+  readonly events: readonly CanonicalTrajectoryEvent[]
+}
+
+/** One provider-native evidence descriptor. */
+export interface RefinementProviderEvidenceDescriptor {
+  readonly ordinal: number
+  readonly role: string
+  readonly mediaType: string
+  readonly bytes: number
+  readonly sha256: string
+}
+
+/** One bounded provider-native evidence page. */
+export interface RefinementProviderEvidencePage {
+  readonly runId: HitchRunId
+  readonly file: RefinementProviderEvidenceDescriptor
+  readonly encoding: 'utf8' | 'base64'
+  readonly content: string
+  readonly nextCursor: string | null
+}
+
+/** Start request accepted from the `/refine` consumer. */
+export interface RefinementStartRequest {
+  readonly objective: string | null
+}
+
+/** Durable start acknowledgement and its linking Session event. */
+export interface RefinementStartValue {
+  readonly refinementId: RefinementId
+  readonly sourceEventSeq: number
+}
+
+/** List request for one exact persisted Session lifecycle. */
+export interface RefinementListRequest {
+  readonly sessionId: SessionId
+}
+
+/** List response value. */
+export interface RefinementListValue {
+  readonly records: readonly RefinementSummary[]
+}
+
+/** Detail request. */
+export interface RefinementGetRequest {
+  readonly sessionId: SessionId
+  readonly refinementId: RefinementId
+}
+
+/** Cancel request with compare-and-set protection. */
+export interface RefinementCancelRequest extends RefinementGetRequest {
+  readonly ifVersion: RefinementVersion
+}
+
+/** Cancellation acknowledgement. */
+export interface RefinementCancelValue {
+  readonly state: 'stopped' | 'still-running' | 'already-terminal'
+  readonly record: RefinementRecordV1
+}
+
+/** Evidence request for one selected iteration. */
+export interface RefinementEvaluationRequest extends RefinementGetRequest {
+  readonly iterationId: RefinementIterationId
+  readonly dimension: RefinementComparisonDimension
+  readonly referenceRunId: HitchRunId | null
+}
+
+/** Canonical trajectory request for one referenced run. */
+export interface RefinementTrajectoryRequest extends RefinementGetRequest {
+  readonly runId: HitchRunId
+}
+
+/** Bounded provider evidence request for one referenced run. */
+export interface RefinementProviderEvidenceRequest extends RefinementTrajectoryRequest {
+  readonly fileOrdinal: number
+  readonly cursor: string | null
+}
+
+/** Stable business failure shared by refinement operations. */
+export interface RefinementBusinessFailure {
+  readonly code:
+    | 'refinement-not-found'
+    | 'session-lifecycle-mismatch'
+    | 'driver-unavailable'
+    | 'evidence-provider-unavailable'
+    | 'evaluation-not-found'
+    | 'run-not-found'
+    | 'trajectory-not-found'
+    | 'trajectory-corrupt'
+    | 'version-conflict'
+    | 'already-terminal'
+    | 'cancel-unavailable'
+    | 'objective-too-large'
+    | 'response-too-large'
+  readonly message: string
+}
+
+/** Successful refinement operation. */
+export interface RefinementSuccess<T> {
+  readonly ok: true
+  readonly value: T
+}
+
+/** Business-rejected refinement operation. */
+export interface RefinementRejected {
+  readonly ok: false
+  readonly error: RefinementBusinessFailure
+}
+
+/** Start result. */
+export type RefinementStartResult = RefinementSuccess<RefinementStartValue> | RefinementRejected
+/** List result. */
+export type RefinementListResult = RefinementSuccess<RefinementListValue> | RefinementRejected
+/** Detail result. */
+export type RefinementGetResult = RefinementSuccess<RefinementRecordV1> | RefinementRejected
+/** Cancel result. */
+export type RefinementCancelResult = RefinementSuccess<RefinementCancelValue> | RefinementRejected
+/** Evaluation result. */
+export type RefinementEvaluationResult = RefinementSuccess<RefinementEvaluationView> | RefinementRejected
+/** Canonical trajectory result. */
+export type RefinementTrajectoryResult = RefinementSuccess<CanonicalTrajectoryDocument> | RefinementRejected
+/** Provider evidence result. */
+export type RefinementProviderEvidenceResult = RefinementSuccess<RefinementProviderEvidencePage> | RefinementRejected
+
+declare module '@deepseek-ai/dsh-session/types' {
+  interface SessionEventMap {
+    /** Required log-only link from one Session lifecycle to its refinement sidecar. */
+    'refinement/created': { refinementId: RefinementId }
+  }
+}
+
+declare module '@deepseek-ai/cordis' {
+  interface Events {
+    /**
+     * A refinement record or referenced evidence changed; clients must perform an authoritative read.
+     * @param sessionId - owning Session id.
+     * @param refinementId - invalidated refinement.
+     * @param changeToken - equality-only invalidation token.
+     * @mode emit
+     */
+    'refinement/change'(
+      sessionId: SessionId,
+      refinementId: RefinementId,
+      changeToken: RefinementChangeToken,
+    ): void
+  }
+}

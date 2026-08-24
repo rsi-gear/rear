@@ -1,0 +1,6 @@
+# Installation adds a dormant row. Enable and configure it in the selected
+# Web profile; package installation itself must not start a filesystem reader.
+- insert:
+    - id: rear-refinement
+      name: dsh-plugin-rear
+      disabled: true
