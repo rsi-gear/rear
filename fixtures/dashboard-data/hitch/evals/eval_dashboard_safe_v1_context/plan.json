@@ -1,0 +1,17 @@
+{
+  "schema_version": "1",
+  "tasks": [
+    {
+      "id": "cross-file-trace"
+    },
+    {
+      "id": "constraint-recall"
+    },
+    {
+      "id": "evidence-citation"
+    },
+    {
+      "id": "distractor-filtering"
+    }
+  ]
+}

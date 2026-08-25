@@ -104,11 +104,19 @@ const harnesses = {
   },
 }
 
+const benchmarks = {
+  quality: { id: 'rear-dashboard-benchmark', revision: '2026.08' },
+  safety: { id: 'tool-use-safety', revision: '2026.08' },
+  context: { id: 'long-context-retrieval', revision: '2026.07' },
+}
+
 const evaluations = [
   {
     evalId: 'eval_dashboard_baseline',
     candidateId: 'candidate-dashboard-baseline',
     harness: harnesses.baseline,
+    benchmark: benchmarks.quality,
+    durationMs: 2_250,
     trials: [
       valid('json-schema-repair', 1, 0.50, 'canonical-provider'),
       valid('json-schema-repair', 2, 0.60),
@@ -122,6 +130,8 @@ const evaluations = [
     evalId: 'eval_dashboard_safe_v1',
     candidateId: 'candidate-dashboard-safe-v1',
     harness: harnesses.safeV1,
+    benchmark: benchmarks.quality,
+    durationMs: 2_650,
     trials: [
       valid('json-schema-repair', 1, 0.65),
       valid('unicode-paths', 1, 0.75),
@@ -133,6 +143,8 @@ const evaluations = [
     evalId: 'eval_dashboard_quality_v2',
     candidateId: 'candidate-dashboard-quality-v2',
     harness: harnesses.qualityV2,
+    benchmark: benchmarks.quality,
+    durationMs: 3_350,
     trials: [
       valid('json-schema-repair', 1, 0.85, 'canonical-provider', { largeProviderEvidence: true }),
       valid('json-schema-repair', 2, 0.95),
@@ -141,6 +153,84 @@ const evaluations = [
       invalid('retry-backoff', 3, 'infrastructure-timeout', 'missing', { execution: 'timed_out' }),
       valid('tool-ordering', 1, 0.90, 'canonical-provider'),
       invalid('tool-ordering', 2, 'tool-result-missing', 'provider-only', { execution: 'failed' }),
+    ],
+  },
+  {
+    evalId: 'eval_dashboard_baseline_safety',
+    candidateId: 'candidate-dashboard-baseline',
+    harness: harnesses.baseline,
+    benchmark: benchmarks.safety,
+    durationMs: 1_850,
+    trials: [
+      valid('safe-api-selection', 1, 0.65),
+      valid('destructive-guard', 1, 0.70),
+      valid('argument-validation', 1, 0.60),
+      valid('tool-recovery', 1, 0.55),
+    ],
+  },
+  {
+    evalId: 'eval_dashboard_safe_v1_safety',
+    candidateId: 'candidate-dashboard-safe-v1',
+    harness: harnesses.safeV1,
+    benchmark: benchmarks.safety,
+    durationMs: 2_250,
+    trials: [
+      valid('safe-api-selection', 1, 0.82),
+      valid('destructive-guard', 1, 0.92),
+      valid('argument-validation', 1, 0.80),
+      valid('tool-recovery', 1, 0.72),
+    ],
+  },
+  {
+    evalId: 'eval_dashboard_quality_v2_safety',
+    candidateId: 'candidate-dashboard-quality-v2',
+    harness: harnesses.qualityV2,
+    benchmark: benchmarks.safety,
+    durationMs: 2_850,
+    trials: [
+      valid('safe-api-selection', 1, 0.68),
+      valid('destructive-guard', 1, 0.45),
+      valid('argument-validation', 1, 0.64),
+      valid('tool-recovery', 1, 0.60),
+    ],
+  },
+  {
+    evalId: 'eval_dashboard_baseline_context',
+    candidateId: 'candidate-dashboard-baseline',
+    harness: harnesses.baseline,
+    benchmark: benchmarks.context,
+    durationMs: 3_450,
+    trials: [
+      valid('cross-file-trace', 1, 0.55),
+      valid('constraint-recall', 1, 0.65),
+      valid('evidence-citation', 1, 0.50),
+      valid('distractor-filtering', 1, 0.60),
+    ],
+  },
+  {
+    evalId: 'eval_dashboard_safe_v1_context',
+    candidateId: 'candidate-dashboard-safe-v1',
+    harness: harnesses.safeV1,
+    benchmark: benchmarks.context,
+    durationMs: 3_850,
+    trials: [
+      valid('cross-file-trace', 1, 0.52),
+      valid('constraint-recall', 1, 0.70),
+      valid('evidence-citation', 1, 0.48),
+      valid('distractor-filtering', 1, 0.62),
+    ],
+  },
+  {
+    evalId: 'eval_dashboard_quality_v2_context',
+    candidateId: 'candidate-dashboard-quality-v2',
+    harness: harnesses.qualityV2,
+    benchmark: benchmarks.context,
+    durationMs: 4_650,
+    trials: [
+      valid('cross-file-trace', 1, 0.80),
+      valid('constraint-recall', 1, 0.82),
+      valid('evidence-citation', 1, 0.75),
+      valid('distractor-filtering', 1, 0.78),
     ],
   },
 ]
@@ -212,7 +302,7 @@ async function writeEvaluation(root, evaluation, startOrdinal) {
       schema_version: '1',
       run_id: id,
       context: {
-        kind: 'benchmark_task', benchmark_id: 'rear-dashboard-benchmark', benchmark_revision: '2026.08',
+        kind: 'benchmark_task', benchmark_id: evaluation.benchmark.id, benchmark_revision: evaluation.benchmark.revision,
         task_id: source.taskId, task_digest: `fixture-digest:${source.taskId}`, verifier_identity: 'rear-fixture-verifier-v1',
       },
       parent: { kind: 'eval', eval_id: evaluation.evalId, trial_id: trialId, attempt: source.attempt },
@@ -222,7 +312,7 @@ async function writeEvaluation(root, evaluation, startOrdinal) {
       protocol,
       observation,
       created_at: createdAt,
-      completed_at: createdAt + 2_500,
+      completed_at: createdAt + evaluation.durationMs,
       ...(source.evidence === 'missing' ? {} : { trajectory_ref: 'trajectory.ref.json' }),
     })
     resultTrials.push({
@@ -239,17 +329,19 @@ async function writeEvaluation(root, evaluation, startOrdinal) {
   })
   await json(join(evalDirectory, 'result.json'), {
     schema_version: '1', eval_id: evaluation.evalId,
-    benchmark_id: 'rear-dashboard-benchmark', benchmark_revision: '2026.08',
+    benchmark_id: evaluation.benchmark.id, benchmark_revision: evaluation.benchmark.revision,
     status: 'succeeded', trials: resultTrials,
   })
   return startOrdinal + evaluation.trials.length
 }
 
-function evaluationRef(evalId, candidateId) {
+function evaluationRef(evalId) {
+  const evaluation = evaluations.find(item => item.evalId === evalId)
+  if (evaluation === undefined) throw new TypeError(`unknown fixture evaluation ${evalId}`)
   return {
-    providerId: 'hitch', evalId, candidateId,
+    providerId: 'hitch', evalId, candidateId: evaluation.candidateId,
     requestedModelId: 'deepseek-v3.2',
-    benchmarkId: 'rear-dashboard-benchmark', benchmarkRevision: '2026.08',
+    benchmarkId: evaluation.benchmark.id, benchmarkRevision: evaluation.benchmark.revision,
   }
 }
 
@@ -278,8 +370,12 @@ function records(session) {
         id: 'iteration-dashboard-01', ordinal: 1, status: 'settled',
         candidateIds: ['candidate-dashboard-baseline', 'candidate-dashboard-safe-v1'],
         evaluationRefs: [
-          evaluationRef('eval_dashboard_baseline', 'candidate-dashboard-baseline'),
-          evaluationRef('eval_dashboard_safe_v1', 'candidate-dashboard-safe-v1'),
+          evaluationRef('eval_dashboard_baseline'),
+          evaluationRef('eval_dashboard_safe_v1'),
+          evaluationRef('eval_dashboard_baseline_safety'),
+          evaluationRef('eval_dashboard_safe_v1_safety'),
+          evaluationRef('eval_dashboard_baseline_context'),
+          evaluationRef('eval_dashboard_safe_v1_context'),
         ],
         createdAt: iterationOneCreatedAt, completedAt: iterationOneCreatedAt + 40 * 60_000,
       },
@@ -287,8 +383,12 @@ function records(session) {
         id: 'iteration-dashboard-02', ordinal: 2, status: 'settled',
         candidateIds: ['candidate-dashboard-baseline', 'candidate-dashboard-quality-v2'],
         evaluationRefs: [
-          evaluationRef('eval_dashboard_baseline', 'candidate-dashboard-baseline'),
-          evaluationRef('eval_dashboard_quality_v2', 'candidate-dashboard-quality-v2'),
+          evaluationRef('eval_dashboard_baseline'),
+          evaluationRef('eval_dashboard_quality_v2'),
+          evaluationRef('eval_dashboard_baseline_safety'),
+          evaluationRef('eval_dashboard_quality_v2_safety'),
+          evaluationRef('eval_dashboard_baseline_context'),
+          evaluationRef('eval_dashboard_quality_v2_context'),
         ],
         createdAt: iterationTwoCreatedAt, completedAt: iterationTwoCreatedAt + 55 * 60_000,
       },
@@ -350,6 +450,12 @@ function fixtureReadme(manifest) {
     '',
     'REAR 按完整 Session lifecycle 隔离数据，因此当前 DSH Session 的这三个值必须完全一致。若宿主不从持久化层恢复该 Session，请用这些 metadata 创建测试 Session。',
     '',
+    '## Benchmark 组合',
+    '',
+    ...manifest.benchmarks.map(item => `- \`${item.id}@${item.revision}\``),
+    '',
+    '候选数据刻意保留不同权衡：baseline 延迟最低；safe-tools 在工具安全上领先；quality-v2 等权平均得分最高，但在 destructive-guard 上超过 0.01 回归红线。',
+    '',
     '## 挂载',
     '',
     '```yaml',
@@ -368,7 +474,7 @@ function fixtureReadme(manifest) {
     'npm run fixture:dashboard -- --session-id my-session --session-created-at 1787293200000 --session-cwd /workspace/demo',
     '```',
     '',
-    '生成命令会完整替换目标目录。默认数据是确定性的，包含 3 条历史 refinement、2 次迭代、3 个候选版本，以及 improved/regressed/unchanged、invalid、timed-out、missing、provider-only、corrupt 和分页 raw evidence 场景。',
+    '生成命令会完整替换目标目录。默认数据是确定性的，包含 3 条历史 refinement、2 次迭代、3 个候选版本和 3 套 benchmark。数据覆盖跨 benchmark 提升、回退红线、质量/延迟权衡，以及 improved/regressed/unchanged、invalid、timed-out、missing、provider-only、corrupt 和分页 raw evidence 场景。',
     '',
   ].join('\n')
 }
@@ -391,6 +497,7 @@ async function main() {
     description: 'Deterministic, mountable REAR dashboard fixture',
     session: { id: options.sessionId, createdAt: options.sessionCreatedAt, cwd: options.sessionCwd },
     primaryRefinementId: fixtureRecords.primaryId,
+    benchmarks: Object.values(benchmarks),
     mounts: {
       storage: { source: 'storage', readOnly: false, config: '@deepseek-ai/dsh-storage-json.root' },
       hitch: { source: 'hitch', readOnly: true, config: 'dsh-plugin-rear.hitch.root' },

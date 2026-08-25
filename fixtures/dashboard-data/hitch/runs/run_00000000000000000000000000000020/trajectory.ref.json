@@ -1,0 +1,13 @@
+{
+  "schema_version": "2",
+  "run_id": "run_00000000000000000000000000000020",
+  "files": [
+    {
+      "role": "canonical_session",
+      "path": "trajectory/canonical/session.jsonl",
+      "media_type": "application/x-ndjson",
+      "sha256": "sha256:1cb5196e175ba8d96166d2b57c0825bf2c2d396af13b4949de6d469be97ac47e",
+      "bytes": 1155
+    }
+  ]
+}

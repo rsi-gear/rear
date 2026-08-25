@@ -5,9 +5,7 @@ import type {
   ConvViewProps,
 } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {
-  RefinementEvaluationView,
   RefinementId,
-  RefinementIterationId,
   RefinementProviderEvidencePage,
   RefinementRunView,
 } from '../types.ts'
@@ -15,6 +13,13 @@ import type { RefinementController } from './controller.ts'
 import { en, type RefinementKey } from './locales.ts'
 import { OfflineTrajectorySurface } from './OfflineTrajectorySurface.tsx'
 import type { RefinementLinksSnapshot } from './refinement-links.ts'
+import {
+  BENCHMARK_REGRESSION_GUARDRAIL,
+  benchmarkKey,
+  benchmarkPortfolio,
+  combinationScores,
+  type BenchmarkPortfolio,
+} from './benchmark-dashboard.ts'
 
 const css = {
   root: 'rear-refinement-root', header: 'rear-refinement-header', list: 'rear-refinement-list',
@@ -45,6 +50,12 @@ const css = {
   runOption: 'rear-refinement-run-option', runOptionTop: 'rear-refinement-run-option-top',
   backButton: 'rear-refinement-back', comparisonHead: 'rear-refinement-comparison-head',
   filters: 'rear-refinement-filters', filter: 'rear-refinement-filter',
+  portfolio: 'rear-refinement-portfolio', portfolioStats: 'rear-refinement-portfolio-stats',
+  portfolioStat: 'rear-refinement-portfolio-stat', portfolioLayout: 'rear-refinement-portfolio-layout',
+  matrix: 'rear-refinement-matrix', matrixCell: 'rear-refinement-matrix-cell',
+  matrixValue: 'rear-refinement-matrix-value', matrixDelta: 'rear-refinement-matrix-delta',
+  tradeoff: 'rear-refinement-tradeoff', tradeoffPlot: 'rear-refinement-tradeoff-plot',
+  tradeoffLegend: 'rear-refinement-tradeoff-legend', benchmarkTabs: 'rear-refinement-benchmark-tabs',
 } as const
 
 const EMPTY_LINKS: RefinementLinksSnapshot = new Map()
@@ -102,106 +113,6 @@ function attemptLabel(run: RefinementRunView, t: ViewProps['t']): string {
   return `#${run.attempt} · ${statusLabel(run.execution, t)} · ${observation}`
 }
 
-interface CombinationScore {
-  readonly key: string
-  readonly iterationId: RefinementIterationId
-  readonly candidateId: string
-  readonly benchmarkId: string
-  readonly benchmarkRevision: string
-  readonly harnessId: string
-  readonly harnessRef: string
-  readonly revision: string | null
-  readonly modelId: string
-  readonly provider: string | null
-  readonly protocolIdentity: string
-  readonly mean: number
-  readonly taskCount: number
-  readonly plannedTaskCount: number | null
-  readonly runCount: number
-  readonly provisional: boolean
-}
-
-function combinationScores(
-  iterationId: RefinementIterationId,
-  evaluation: RefinementEvaluationView | null,
-): readonly CombinationScore[] {
-  if (evaluation === null) return []
-  const groups = new Map<string, {
-    candidateId: string
-    benchmarkId: string
-    benchmarkRevision: string
-    harnessId: string
-    harnessRef: string
-    revision: string | null
-    modelId: string
-    provider: string | null
-    protocolIdentity: string
-    tasks: Map<string, number[]>
-    plannedTaskCounts: number[]
-    runCount: number
-  }>()
-  for (const item of evaluation.evaluations) {
-    for (const run of item.runs) {
-      if (run.integrity !== 'valid' || run.observation.state !== 'valid') continue
-      const modelId = run.model.effectiveId ?? run.model.requestedId
-      const key = [
-        run.candidateId,
-        item.ref.benchmarkId,
-        item.ref.benchmarkRevision,
-        run.harness.id,
-        run.harness.revisionIdentity ?? '',
-        modelId,
-        run.protocolIdentity,
-      ].join('\u0000')
-      const group = groups.get(key) ?? {
-        candidateId: run.candidateId,
-        benchmarkId: item.ref.benchmarkId,
-        benchmarkRevision: item.ref.benchmarkRevision,
-        harnessId: run.harness.id,
-        harnessRef: run.harness.requestedRef,
-        revision: run.harness.revisionIdentity,
-        modelId,
-        provider: run.model.provider,
-        protocolIdentity: run.protocolIdentity,
-        tasks: new Map<string, number[]>(),
-        plannedTaskCounts: [],
-        runCount: 0,
-      }
-      const rewards = group.tasks.get(run.taskKey) ?? []
-      rewards.push(run.observation.reward)
-      group.tasks.set(run.taskKey, rewards)
-      if (item.plannedTasks !== null) group.plannedTaskCounts.push(item.plannedTasks)
-      group.runCount += 1
-      groups.set(key, group)
-    }
-  }
-  return [...groups.entries()].flatMap(([key, group]) => {
-    const taskMeans = [...group.tasks.values()].map(rewards => rewards.reduce((sum, value) => sum + value, 0) / rewards.length)
-    if (taskMeans.length === 0) return []
-    const plannedTaskCount = group.plannedTaskCounts.length === 0 ? null : Math.max(...group.plannedTaskCounts)
-    return [{
-      key,
-      iterationId,
-      candidateId: group.candidateId,
-      benchmarkId: group.benchmarkId,
-      benchmarkRevision: group.benchmarkRevision,
-      harnessId: group.harnessId,
-      harnessRef: group.harnessRef,
-      revision: group.revision,
-      modelId: group.modelId,
-      provider: group.provider,
-      protocolIdentity: group.protocolIdentity,
-      mean: taskMeans.reduce((sum, value) => sum + value, 0) / taskMeans.length,
-      taskCount: taskMeans.length,
-      plannedTaskCount,
-      runCount: group.runCount,
-      provisional: plannedTaskCount === null || taskMeans.length < plannedTaskCount,
-    }]
-  }).sort((left, right) => Number(left.provisional) - Number(right.provisional)
-    || right.mean - left.mean
-    || right.taskCount - left.taskCount)
-}
-
 function formatScore(value: number | null | undefined, unknown: string): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return unknown
   return value.toFixed(3)
@@ -228,6 +139,130 @@ function validMean(runs: readonly RefinementRunView[]): number | null {
     ? [run.observation.reward]
     : [])
   return rewards.length === 0 ? null : rewards.reduce((sum, value) => sum + value, 0) / rewards.length
+}
+
+function formatDuration(value: number | null, unknown: string): string {
+  if (value === null || !Number.isFinite(value)) return unknown
+  return value >= 1_000 ? `${(value / 1_000).toFixed(2)}s` : `${Math.round(value)}ms`
+}
+
+function PortfolioDashboard({ portfolio, selectedBenchmarkKey, onSelectBenchmark, t }: {
+  readonly portfolio: BenchmarkPortfolio
+  readonly selectedBenchmarkKey: string | null
+  readonly onSelectBenchmark: ((key: string) => void) | null
+  readonly t: ViewProps['t']
+}) {
+  if (portfolio.benchmarks.length === 0) return <div className={css.empty}>{t('portfolio.noData')}</div>
+  const points = portfolio.rows.filter(row => row.meanScore !== null && row.meanDurationMs !== null)
+  const scores = points.flatMap(row => row.meanScore === null ? [] : [row.meanScore])
+  const durations = points.flatMap(row => row.meanDurationMs === null ? [] : [row.meanDurationMs])
+  const minScore = scores.length === 0 ? 0 : Math.min(...scores)
+  const maxScore = scores.length === 0 ? 0 : Math.max(...scores)
+  const minDuration = durations.length === 0 ? 0 : Math.min(...durations)
+  const maxDuration = durations.length === 0 ? 0 : Math.max(...durations)
+  const scoreRange = maxScore - minScore || 1
+  const durationRange = maxDuration - minDuration || 1
+  const guardrailPassed = portfolio.guardrailChecks - portfolio.guardrailViolations
+  return (
+    <div className={css.portfolio}>
+      <div className={css.portfolioStats}>
+        <span className={css.portfolioStat}>
+          <span>{t('portfolio.benchmarks')}</span><strong>{portfolio.benchmarks.length}</strong>
+        </span>
+        <span className={css.portfolioStat} data-tone={portfolio.guardrailViolations > 0 ? 'warning' : 'positive'}>
+          <span>{t('portfolio.guardrails')}</span>
+          <strong>{portfolio.guardrailChecks === 0 ? '—' : `${guardrailPassed}/${portfolio.guardrailChecks}`}</strong>
+          <small>{t('portfolio.guardrailHint')} −{BENCHMARK_REGRESSION_GUARDRAIL.toFixed(2)}</small>
+        </span>
+        <span className={css.portfolioStat}>
+          <span>{t('portfolio.leadingDelta')}</span>
+          <strong>{formatDelta(portfolio.leadingRow?.meanDelta ?? null, '—')}</strong>
+          <small>{portfolio.leadingRow?.label ?? t('unknown')}</small>
+        </span>
+        <span className={css.portfolioStat}>
+          <span>{t('breakdown.validRuns')}</span><strong>{portfolio.validRuns}</strong>
+        </span>
+      </div>
+      <div className={css.portfolioLayout}>
+        <div className={css.tableWrap}>
+          <table className={`${css.table} ${css.matrix}`}>
+            <thead>
+              <tr>
+                <th>{t('portfolio.candidate')}</th>
+                {portfolio.benchmarks.map(benchmark => (
+                  <th key={benchmark.key} data-selected={benchmark.key === selectedBenchmarkKey}>
+                    {onSelectBenchmark === null ? benchmark.id : (
+                      <button type="button" onClick={() => { onSelectBenchmark(benchmark.key) }}>{benchmark.id}</button>
+                    )}
+                    <span>{benchmark.revision}</span>
+                  </th>
+                ))}
+                <th>{t('portfolio.meanReward')}</th>
+                <th>{t('portfolio.meanDelta')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {portfolio.rows.map(row => (
+                <tr key={row.candidateId} data-role={row.role}>
+                  <td className={css.taskIdentity}>
+                    <strong>{row.label}</strong>
+                    <span className={css.row}>
+                      <span className={css.pill}>{roleLabel(row.role, t)}</span>
+                      {row.pareto && <span className={css.pill} data-tone="best">{t('portfolio.pareto')}</span>}
+                    </span>
+                  </td>
+                  {row.cells.map(cell => (
+                    <td
+                      className={css.matrixCell}
+                      data-status={cell.status}
+                      data-guardrail={cell.guardrailViolation}
+                      key={cell.benchmark.key}
+                    >
+                      <strong className={css.matrixValue}>{formatScore(cell.score?.mean, '—')}</strong>
+                      <span className={css.matrixDelta}>{row.role === 'baseline' ? t('baseline') : formatDelta(cell.delta, '—')}</span>
+                    </td>
+                  ))}
+                  <td className={css.taskScore}><strong>{formatScore(row.meanScore, '—')}</strong><span className={css.taskRuns}>{row.benchmarkCoverage}/{portfolio.benchmarks.length}</span></td>
+                  <td className={css.taskDelta} data-sign={row.meanDelta === null ? 'none' : row.meanDelta > 0 ? 'positive' : row.meanDelta < 0 ? 'negative' : 'neutral'}>
+                    {formatDelta(row.meanDelta, '—')}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {points.length > 1 && (
+          <aside className={css.tradeoff}>
+            <div>
+              <span className={css.kicker}>{t('portfolio.tradeoff')}</span>
+              <h3>{t('portfolio.paretoTitle')}</h3>
+            </div>
+            <svg className={css.tradeoffPlot} viewBox="0 0 440 230" role="img" aria-label={t('portfolio.paretoTitle')}>
+              <line x1="52" x2="410" y1="190" y2="190" />
+              <line x1="52" x2="52" y1="20" y2="190" />
+              <text x="230" y="222" textAnchor="middle">{t('portfolio.latency')} →</text>
+              <text x="13" y="108" textAnchor="middle" transform="rotate(-90 13 108)">{t('portfolio.meanReward')} →</text>
+              <text x="52" y="207" textAnchor="middle">{formatDuration(minDuration, '—')}</text>
+              <text x="410" y="207" textAnchor="middle">{formatDuration(maxDuration, '—')}</text>
+              <text x="44" y="191" textAnchor="end">{formatScore(minScore, '—')}</text>
+              <text x="44" y="25" textAnchor="end">{formatScore(maxScore, '—')}</text>
+              {points.map((row) => {
+                const x = 52 + (((row.meanDurationMs ?? minDuration) - minDuration) / durationRange) * 358
+                const y = 190 - (((row.meanScore ?? minScore) - minScore) / scoreRange) * 165
+                return (
+                  <g key={row.candidateId} data-pareto={row.pareto}>
+                    <circle cx={x} cy={y} r={row.pareto ? 7 : 5} />
+                    <text x={x + 10} y={y - 9}>{row.label}</text>
+                  </g>
+                )
+              })}
+            </svg>
+            <div className={css.tradeoffLegend}><span />{t('portfolio.paretoHint')}</div>
+          </aside>
+        )}
+      </div>
+    </div>
+  )
 }
 
 function TrajectoryLane({ run, document, loadRaw, closeRaw, raw }: {
@@ -306,6 +341,7 @@ export function RefinementView({
 }: ViewProps) {
   const state = useRefinement(value => value)
   const [taskFilter, setTaskFilter] = useState<'all' | 'improved' | 'regressed' | 'unchanged'>('all')
+  const [selectedBenchmarkKey, setSelectedBenchmarkKey] = useState<string | null>(null)
   useEffect(() => { void ensure() }, [ensure])
 
   if (state.status === 'cold' || state.status === 'loading') {
@@ -326,22 +362,30 @@ export function RefinementView({
 
   const detail = state.detail
   const selectedIteration = detail?.iterations.find(iteration => iteration.id === state.selectedIterationId) ?? null
-  const currentBenchmarkRef = state.evaluation?.evaluations[0]?.ref ?? selectedIteration?.evaluationRefs[0] ?? null
-  const rankedScores = Object.entries(state.evaluationHistory)
-    .flatMap(([iterationId, evaluation]) => combinationScores(iterationId as RefinementIterationId, evaluation))
-    .filter(item => currentBenchmarkRef === null
-      || (item.benchmarkId === currentBenchmarkRef.benchmarkId
-        && item.benchmarkRevision === currentBenchmarkRef.benchmarkRevision))
-    .sort((left, right) => Number(left.provisional) - Number(right.provisional)
-      || right.mean - left.mean
-      || right.taskCount - left.taskCount)
-  const best = rankedScores[0] ?? null
+  const selectedEvaluation = state.selectedIterationId === null
+    ? state.evaluation
+    : state.evaluationHistory[state.selectedIterationId] ?? state.evaluation
+  const currentBenchmarkRef = selectedEvaluation?.evaluations[0]?.ref ?? selectedIteration?.evaluationRefs[0] ?? null
+  const overviewScores = state.selectedIterationId === null
+    ? []
+    : combinationScores(state.selectedIterationId, selectedEvaluation)
+  const overviewPortfolio = benchmarkPortfolio(
+    overviewScores,
+    detail?.candidates ?? [],
+    detail?.baselineCandidateId ?? null,
+  )
+  const bestPortfolioRow = overviewPortfolio.leadingRow
+  const best = overviewScores.find(score => score.candidateId === bestPortfolioRow?.candidateId) ?? null
   const bestCandidate = detail?.candidates.find(candidate => candidate.id === best?.candidateId) ?? null
 
   if (state.level === 'overview') {
     if (detail === null) return <main className={css.root}><div className={css.empty}>{t('loading')}</div></main>
-    const benchmarkId = currentBenchmarkRef?.benchmarkId ?? t('unknown')
-    const benchmarkRevision = currentBenchmarkRef?.benchmarkRevision ?? t('unknown')
+    const benchmarkId = overviewPortfolio.benchmarks.length > 1
+      ? t('portfolio.title')
+      : currentBenchmarkRef?.benchmarkId ?? t('unknown')
+    const benchmarkRevision = overviewPortfolio.benchmarks.length > 1
+      ? String(overviewPortfolio.benchmarks.length)
+      : currentBenchmarkRef?.benchmarkRevision ?? t('unknown')
     const canOpen = state.selectedIterationId !== null
     return (
       <main className={css.root}>
@@ -378,12 +422,16 @@ export function RefinementView({
             </div>
             <div className={css.facts}>
               <span className={css.fact}>
-                <span className={css.factLabel}>{t('overview.benchmarkVersion')}</span>
+                <span className={css.factLabel}>{overviewPortfolio.benchmarks.length > 1 ? t('portfolio.benchmarks') : t('overview.benchmarkVersion')}</span>
                 {benchmarkRevision}
               </span>
               <span className={css.fact}>
-                <span className={css.factLabel}>{t('breakdown.taskCoverage')}</span>
-                {best === null ? t('unknown') : `${best.taskCount}/${display(best.plannedTaskCount, t('unknown'))}`}
+                <span className={css.factLabel}>{overviewPortfolio.benchmarks.length > 1 ? t('portfolio.guardrails') : t('breakdown.taskCoverage')}</span>
+                {overviewPortfolio.benchmarks.length > 1
+                  ? overviewPortfolio.guardrailChecks === 0
+                    ? t('unknown')
+                    : `${overviewPortfolio.guardrailChecks - overviewPortfolio.guardrailViolations}/${overviewPortfolio.guardrailChecks}`
+                  : best === null ? t('unknown') : `${best.taskCount}/${display(best.plannedTaskCount, t('unknown'))}`}
               </span>
               <span className={css.fact}>
                 <span className={css.factLabel}>{t('overview.updated')}</span>
@@ -403,16 +451,24 @@ export function RefinementView({
             </div>
           </div>
           <div className={css.heroScore}>
-            <span className={css.scoreLabel}>{t('overview.bestScore')}</span>
-            <strong className={css.scoreValue}>{best === null ? '—' : formatScore(best.mean, t('unknown'))}</strong>
-            {best !== null && (
+            <span className={css.scoreLabel}>{overviewPortfolio.benchmarks.length > 1 ? t('portfolio.meanReward') : t('overview.bestScore')}</span>
+            <strong className={css.scoreValue}>{bestPortfolioRow === null ? '—' : formatScore(bestPortfolioRow.meanScore, t('unknown'))}</strong>
+            {bestPortfolioRow !== null && (
               <span className={css.muted}>
-                {best.runCount} {t('breakdown.validRuns')} · {best.taskCount} {t('task')}
+                {formatDelta(bestPortfolioRow.meanDelta, '—')} {t('portfolio.meanDelta')} · {bestPortfolioRow.benchmarkCoverage}/{overviewPortfolio.benchmarks.length}
               </span>
             )}
           </div>
         </section>
         {detail.failure !== undefined && <p className={css.error}>{detail.failure.code}: {detail.failure.message}</p>}
+        {overviewPortfolio.benchmarks.length > 0 && (
+          <section className={css.section}>
+            <div className={css.sectionHeader}>
+              <div><span className={css.kicker}>{t('portfolio.kicker')}</span><h2>{t('portfolio.dashboard')}</h2></div>
+            </div>
+            <PortfolioDashboard portfolio={overviewPortfolio} selectedBenchmarkKey={null} onSelectBenchmark={null} t={t} />
+          </section>
+        )}
         <section className={css.section}>
           <div className={css.sectionHeader}>
             <div><span className={css.kicker}>{t('overview.history')}</span><h2>{t('overview.title')}</h2></div>
@@ -447,8 +503,14 @@ export function RefinementView({
     const currentScores = state.selectedIterationId === null
       ? []
       : combinationScores(state.selectedIterationId, evaluation)
-    const allRuns = evaluation?.evaluations.flatMap(item => item.runs) ?? []
-    const directionIds = [...new Set(evaluation?.evaluations.map(item => item.ref.candidateId) ?? [])]
+    const portfolio = benchmarkPortfolio(currentScores, detail?.candidates ?? [], detail?.baselineCandidateId ?? null)
+    const activeBenchmarkKey = portfolio.benchmarks.some(benchmark => benchmark.key === selectedBenchmarkKey)
+      ? selectedBenchmarkKey
+      : portfolio.benchmarks[0]?.key ?? null
+    const activeEvaluations = evaluation?.evaluations.filter(item => benchmarkKey(item.ref) === activeBenchmarkKey) ?? []
+    const activeScores = currentScores.filter(score => benchmarkKey(score) === activeBenchmarkKey)
+    const allRuns = activeEvaluations.flatMap(item => item.runs)
+    const directionIds = [...new Set(activeEvaluations.map(item => item.ref.candidateId))]
     const directions = directionIds.map((candidateId) => {
       const candidate = detail?.candidates.find(item => item.id === candidateId) ?? null
       return {
@@ -457,12 +519,16 @@ export function RefinementView({
         role: candidate?.role ?? 'candidate',
         harnessRef: candidate?.requestedHarnessRef ?? t('unknown'),
         revision: candidate?.revisionIdentity ?? null,
-        score: currentScores.find(item => item.candidateId === candidateId) ?? null,
+        score: activeScores.find(item => item.candidateId === candidateId) ?? null,
       }
     })
     const comparisonByTask = new Map(evaluation?.comparison.tasks.map(task => [task.taskKey, task]) ?? [])
     const taskIdentity = new Map<string, string>()
     for (const run of allRuns) taskIdentity.set(run.taskKey, run.taskId)
+    const activeTaskComparisons = [...taskIdentity.keys()].flatMap(taskKey => {
+      const comparison = comparisonByTask.get(taskKey)
+      return comparison === undefined ? [] : [comparison]
+    })
     const statusOrder = { regressed: 0, invalid: 1, improved: 2, unchanged: 3, pending: 4 } as const
     const tasks = [...taskIdentity.entries()].map(([taskKey, taskId]) => ({
       taskKey,
@@ -472,8 +538,10 @@ export function RefinementView({
       .sort((left, right) => (statusOrder[left.comparison?.status ?? 'pending'] - statusOrder[right.comparison?.status ?? 'pending'])
         || left.taskId.localeCompare(right.taskId))
     const validRuns = allRuns.filter(run => run.integrity === 'valid' && run.observation.state === 'valid').length
-    const bestCurrent = currentScores[0] ?? null
-    const benchmark = evaluation?.evaluations[0]?.ref ?? currentBenchmarkRef
+    const activeRunIds = new Set(allRuns.map(run => run.id))
+    const comparisonExclusions = evaluation?.comparison.exclusions.filter(item => activeRunIds.has(item.runId)) ?? []
+    const bestCurrent = activeScores[0] ?? null
+    const benchmark = activeEvaluations[0]?.ref ?? currentBenchmarkRef
     return (
       <main className={css.root}>
         <header className={css.header}>
@@ -511,7 +579,30 @@ export function RefinementView({
           <>
             <section className={css.section}>
               <div className={css.sectionHeader}>
-                <div><span className={css.kicker}>01</span><h2>{t('breakdown.experiments')}</h2></div>
+                <div><span className={css.kicker}>01 · {t('portfolio.kicker')}</span><h2>{t('portfolio.dashboard')}</h2></div>
+              </div>
+              <PortfolioDashboard
+                portfolio={portfolio}
+                selectedBenchmarkKey={activeBenchmarkKey}
+                onSelectBenchmark={(key) => { setSelectedBenchmarkKey(key); setTaskFilter('all'); closeDetails() }}
+                t={t}
+              />
+            </section>
+            <nav className={css.benchmarkTabs} aria-label={t('portfolio.selectedBenchmark')}>
+              {portfolio.benchmarks.map(item => (
+                <button
+                  type="button"
+                  data-selected={item.key === activeBenchmarkKey}
+                  key={item.key}
+                  onClick={() => { setSelectedBenchmarkKey(item.key); setTaskFilter('all'); closeDetails() }}
+                >
+                  <strong>{item.id}</strong><span>{item.revision}</span>
+                </button>
+              ))}
+            </nav>
+            <section className={css.section}>
+              <div className={css.sectionHeader}>
+                <div><span className={css.kicker}>02 · {benchmark?.benchmarkId ?? t('unknown')}</span><h2>{t('breakdown.experiments')}</h2></div>
               </div>
               <div className={css.directions}>
                 {directions.map(direction => (
@@ -536,15 +627,15 @@ export function RefinementView({
                 ))}
               </div>
             </section>
-            {evaluation.comparison.exclusions.length > 0 && (
+            {comparisonExclusions.length > 0 && (
               <details className={css.exclusions}>
-                <summary>{evaluation.comparison.strict ? t('strict') : t('exploratory')} · {evaluation.comparison.exclusions.length}</summary>
-                <ul>{evaluation.comparison.exclusions.map(item => <li key={`${item.runId}:${item.code}`}>{item.code} · {item.runId}</li>)}</ul>
+                <summary>{evaluation.comparison.strict ? t('strict') : t('exploratory')} · {comparisonExclusions.length}</summary>
+                <ul>{comparisonExclusions.map(item => <li key={`${item.runId}:${item.code}`}>{item.code} · {item.runId}</li>)}</ul>
               </details>
             )}
             <section className={css.section}>
               <div className={css.sectionHeader}>
-                <div><span className={css.kicker}>02</span><h2>{t('breakdown.tasks')}</h2></div>
+                <div><span className={css.kicker}>03</span><h2>{t('breakdown.tasks')}</h2></div>
                 <div className={css.filters}>
                   {(['all', 'regressed', 'improved', 'unchanged'] as const).map(filter => (
                     <button type="button" className={css.filter} data-selected={taskFilter === filter} key={filter} onClick={() => { setTaskFilter(filter) }}>
@@ -556,8 +647,8 @@ export function RefinementView({
               <div className={css.summaryStrip}>
                 <span className={css.summaryItem}><strong>{taskIdentity.size}</strong>{t('breakdown.taskCoverage')}</span>
                 <span className={css.summaryItem}><strong>{validRuns}</strong>{t('breakdown.validRuns')}</span>
-                <span className={css.summaryItem}><strong>{evaluation.comparison.tasks.filter(task => task.status === 'improved').length}</strong>{t('breakdown.improved')}</span>
-                <span className={css.summaryItem}><strong>{evaluation.comparison.tasks.filter(task => task.status === 'regressed').length}</strong>{t('breakdown.regressed')}</span>
+                <span className={css.summaryItem}><strong>{activeTaskComparisons.filter(task => task.status === 'improved').length}</strong>{t('breakdown.improved')}</span>
+                <span className={css.summaryItem}><strong>{activeTaskComparisons.filter(task => task.status === 'regressed').length}</strong>{t('breakdown.regressed')}</span>
               </div>
               {tasks.length === 0 ? <div className={css.empty}>{t('breakdown.noTasks')}</div> : (
                 <div className={css.tableWrap}>

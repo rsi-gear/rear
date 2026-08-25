@@ -1,0 +1,9 @@
+{"type":"session","version":0,"id":"trajectory-run_00000000000000000000000000000019","createdAt":1787387100000}
+{"type":"turn/start","seq":0,"time":1787387100000,"data":{"turn":1}}
+{"type":"step/start","seq":1,"time":1787387100020,"data":{"turn":1,"step":1}}
+{"type":"assistant/chunk","seq":2,"time":1787387100065,"data":{"turn":1,"step":1,"chunk":{"type":"text","text":"Inspecting fixture input…"}}}
+{"type":"tool/call","seq":3,"time":1787387100090,"data":{"turn":1,"step":1,"id":"call-25","name":"fixture.verify","arguments":{"task":"tool-recovery"}}}
+{"type":"tool/result","seq":4,"time":1787387100130,"data":{"turn":1,"step":1,"id":"call-25","result":{"ok":true,"score":0.72}}}
+{"type":"assistant/message","seq":5,"time":1787387100180,"data":{"turn":1,"step":1,"message":{"content":[{"type":"text","text":"Completed tool-recovery fixture run."}],"source":{"provider":"deepseek","model":"deepseek-v3.2-snapshot-2026-08"}},"usage":{"inputTokens":145,"outputTokens":53}}}
+{"type":"step/end","seq":6,"time":1787387100200,"data":{"turn":1,"step":1}}
+{"type":"turn/end","seq":7,"time":1787387100220,"data":{"turn":1,"reason":{"kind":"completed"}}}

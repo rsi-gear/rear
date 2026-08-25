@@ -1,0 +1,9 @@
+{"type":"session","version":0,"id":"trajectory-run_00000000000000000000000000000016","createdAt":1787386920000}
+{"type":"turn/start","seq":0,"time":1787386920000,"data":{"turn":1}}
+{"type":"step/start","seq":1,"time":1787386920020,"data":{"turn":1,"step":1}}
+{"type":"assistant/chunk","seq":2,"time":1787386920065,"data":{"turn":1,"step":1,"chunk":{"type":"text","text":"Inspecting fixture input…"}}}
+{"type":"tool/call","seq":3,"time":1787386920090,"data":{"turn":1,"step":1,"id":"call-22","name":"fixture.verify","arguments":{"task":"safe-api-selection"}}}
+{"type":"tool/result","seq":4,"time":1787386920130,"data":{"turn":1,"step":1,"id":"call-22","result":{"ok":true,"score":0.82}}}
+{"type":"assistant/message","seq":5,"time":1787386920180,"data":{"turn":1,"step":1,"message":{"content":[{"type":"text","text":"Completed safe-api-selection fixture run."}],"source":{"provider":"deepseek","model":"deepseek-v3.2-snapshot-2026-08"}},"usage":{"inputTokens":142,"outputTokens":50}}}
+{"type":"step/end","seq":6,"time":1787386920200,"data":{"turn":1,"step":1}}
+{"type":"turn/end","seq":7,"time":1787386920220,"data":{"turn":1,"reason":{"kind":"completed"}}}

@@ -37,6 +37,6 @@
     "invalid_reason": "tool-result-missing"
   },
   "created_at": 1787386620000,
-  "completed_at": 1787386622500,
+  "completed_at": 1787386623350,
   "trajectory_ref": "trajectory.ref.json"
 }

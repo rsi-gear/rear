@@ -77,6 +77,38 @@
                 "requestedModelId": "deepseek-v3.2",
                 "benchmarkId": "rear-dashboard-benchmark",
                 "benchmarkRevision": "2026.08"
+              },
+              {
+                "providerId": "hitch",
+                "evalId": "eval_dashboard_baseline_safety",
+                "candidateId": "candidate-dashboard-baseline",
+                "requestedModelId": "deepseek-v3.2",
+                "benchmarkId": "tool-use-safety",
+                "benchmarkRevision": "2026.08"
+              },
+              {
+                "providerId": "hitch",
+                "evalId": "eval_dashboard_safe_v1_safety",
+                "candidateId": "candidate-dashboard-safe-v1",
+                "requestedModelId": "deepseek-v3.2",
+                "benchmarkId": "tool-use-safety",
+                "benchmarkRevision": "2026.08"
+              },
+              {
+                "providerId": "hitch",
+                "evalId": "eval_dashboard_baseline_context",
+                "candidateId": "candidate-dashboard-baseline",
+                "requestedModelId": "deepseek-v3.2",
+                "benchmarkId": "long-context-retrieval",
+                "benchmarkRevision": "2026.07"
+              },
+              {
+                "providerId": "hitch",
+                "evalId": "eval_dashboard_safe_v1_context",
+                "candidateId": "candidate-dashboard-safe-v1",
+                "requestedModelId": "deepseek-v3.2",
+                "benchmarkId": "long-context-retrieval",
+                "benchmarkRevision": "2026.07"
               }
             ],
             "createdAt": 1787384100000,
@@ -106,6 +138,38 @@
                 "requestedModelId": "deepseek-v3.2",
                 "benchmarkId": "rear-dashboard-benchmark",
                 "benchmarkRevision": "2026.08"
+              },
+              {
+                "providerId": "hitch",
+                "evalId": "eval_dashboard_baseline_safety",
+                "candidateId": "candidate-dashboard-baseline",
+                "requestedModelId": "deepseek-v3.2",
+                "benchmarkId": "tool-use-safety",
+                "benchmarkRevision": "2026.08"
+              },
+              {
+                "providerId": "hitch",
+                "evalId": "eval_dashboard_quality_v2_safety",
+                "candidateId": "candidate-dashboard-quality-v2",
+                "requestedModelId": "deepseek-v3.2",
+                "benchmarkId": "tool-use-safety",
+                "benchmarkRevision": "2026.08"
+              },
+              {
+                "providerId": "hitch",
+                "evalId": "eval_dashboard_baseline_context",
+                "candidateId": "candidate-dashboard-baseline",
+                "requestedModelId": "deepseek-v3.2",
+                "benchmarkId": "long-context-retrieval",
+                "benchmarkRevision": "2026.07"
+              },
+              {
+                "providerId": "hitch",
+                "evalId": "eval_dashboard_quality_v2_context",
+                "candidateId": "candidate-dashboard-quality-v2",
+                "requestedModelId": "deepseek-v3.2",
+                "benchmarkId": "long-context-retrieval",
+                "benchmarkRevision": "2026.07"
               }
             ],
             "createdAt": 1787387400000,

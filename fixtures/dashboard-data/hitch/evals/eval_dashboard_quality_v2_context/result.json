@@ -1,0 +1,41 @@
+{
+  "schema_version": "1",
+  "eval_id": "eval_dashboard_quality_v2_context",
+  "benchmark_id": "long-context-retrieval",
+  "benchmark_revision": "2026.07",
+  "status": "succeeded",
+  "trials": [
+    {
+      "trial_id": "eval_dashboard_quality_v2_context-trial-cross-file-trace-1",
+      "run_id": "run_00000000000000000000000000000026",
+      "task_id": "cross-file-trace",
+      "attempt": 1,
+      "observation_status": "valid",
+      "reward": 0.8
+    },
+    {
+      "trial_id": "eval_dashboard_quality_v2_context-trial-constraint-recall-1",
+      "run_id": "run_00000000000000000000000000000027",
+      "task_id": "constraint-recall",
+      "attempt": 1,
+      "observation_status": "valid",
+      "reward": 0.82
+    },
+    {
+      "trial_id": "eval_dashboard_quality_v2_context-trial-evidence-citation-1",
+      "run_id": "run_00000000000000000000000000000028",
+      "task_id": "evidence-citation",
+      "attempt": 1,
+      "observation_status": "valid",
+      "reward": 0.75
+    },
+    {
+      "trial_id": "eval_dashboard_quality_v2_context-trial-distractor-filtering-1",
+      "run_id": "run_00000000000000000000000000000029",
+      "task_id": "distractor-filtering",
+      "attempt": 1,
+      "observation_status": "valid",
+      "reward": 0.78
+    }
+  ]
+}

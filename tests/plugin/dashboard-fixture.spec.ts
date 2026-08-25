@@ -10,10 +10,12 @@ import * as StorageJson from '@deepseek-ai/dsh-storage-json'
 import { HitchRefinementEvidenceProvider } from '../../src/hitch-provider.ts'
 import RefinementRuntime from '../../src/runtime.ts'
 import type { RefinementId, RefinementIterationId } from '../../src/types.ts'
+import { benchmarkPortfolio, combinationScores } from '../../src/client/benchmark-dashboard.ts'
 
 interface FixtureManifest {
   readonly session: { readonly id: string; readonly createdAt: number; readonly cwd: string }
   readonly primaryRefinementId: string
+  readonly benchmarks: readonly { readonly id: string; readonly revision: string }[]
 }
 
 const fixtureRoot = fileURLToPath(new URL('../../fixtures/dashboard-data/', import.meta.url))
@@ -27,6 +29,11 @@ afterEach(async () => {
 describe('mountable dashboard fixture', () => {
   it('loads through the real durable domain and exposes rich Hitch evidence', async () => {
     const manifest = JSON.parse(await readFile(join(fixtureRoot, 'manifest.json'), 'utf8')) as FixtureManifest
+    expect(manifest.benchmarks.map(item => item.id).sort()).toEqual([
+      'long-context-retrieval',
+      'rear-dashboard-benchmark',
+      'tool-use-safety',
+    ])
     context = new Context()
     await context.plugin(SessionStore)
     await context.plugin(Storage)
@@ -77,9 +84,22 @@ describe('mountable dashboard fixture', () => {
     })
     if (!evaluated.ok) throw new Error(evaluated.error.message)
     expect(evaluated.value.comparison.strict).toBe(true)
-    expect(evaluated.value.comparison.tasks.map(task => task.status)).toEqual([
-      'regressed', 'improved', 'improved', 'unchanged',
-    ])
+    expect(new Set(evaluated.value.evaluations.map(item => item.ref.benchmarkId))).toEqual(new Set([
+      'rear-dashboard-benchmark', 'tool-use-safety', 'long-context-retrieval',
+    ]))
+    const comparisonByTask = new Map(evaluated.value.comparison.tasks.map(task => [task.taskId, task.status]))
+    expect(comparisonByTask.get('unicode-paths')).toBe('regressed')
+    expect(comparisonByTask.get('destructive-guard')).toBe('regressed')
+    expect(comparisonByTask.get('cross-file-trace')).toBe('improved')
+    expect(comparisonByTask.get('retry-backoff')).toBe('unchanged')
+    const portfolio = benchmarkPortfolio(
+      combinationScores(iterationId, evaluated.value),
+      detail.value.candidates,
+      detail.value.baselineCandidateId,
+    )
+    expect(portfolio.benchmarks).toHaveLength(3)
+    expect(portfolio.guardrailViolations).toBe(1)
+    expect(portfolio.leadingRow?.candidateId).toBe('candidate-dashboard-quality-v2')
     const runs = evaluated.value.evaluations.flatMap(item => item.runs)
     expect(new Set(runs.map(run => run.trajectory.availability))).toEqual(new Set([
       'available', 'provider-only', 'missing', 'corrupt',

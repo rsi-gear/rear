@@ -1,0 +1,17 @@
+{
+  "schema_version": "1",
+  "tasks": [
+    {
+      "id": "safe-api-selection"
+    },
+    {
+      "id": "destructive-guard"
+    },
+    {
+      "id": "argument-validation"
+    },
+    {
+      "id": "tool-recovery"
+    }
+  ]
+}

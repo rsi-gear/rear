@@ -7,6 +7,20 @@
     "cwd": "/workspace/rear-dashboard-demo"
   },
   "primaryRefinementId": "refinement-dashboard-primary",
+  "benchmarks": [
+    {
+      "id": "rear-dashboard-benchmark",
+      "revision": "2026.08"
+    },
+    {
+      "id": "tool-use-safety",
+      "revision": "2026.08"
+    },
+    {
+      "id": "long-context-retrieval",
+      "revision": "2026.07"
+    }
+  ],
   "mounts": {
     "storage": {
       "source": "storage",

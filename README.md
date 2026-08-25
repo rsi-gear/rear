@@ -126,6 +126,11 @@ the snapshot deterministically with:
 npm run fixture:dashboard
 ```
 
+The fixture includes three benchmark suites across baseline, safe-tools, and
+quality-focused candidates. It exercises the portfolio heatmap, per-benchmark
+regression guardrails, quality/latency Pareto frontier, benchmark drill-down,
+and trajectory evidence states.
+
 The tests cover persistent lifecycle isolation and restart recovery, CAS
 mutations, Hitch ownership/path/checksum behavior, strict comparisons, Client
 request invalidation, a real Loader composition, client-bundle purity, and the

@@ -10,6 +10,14 @@
 
 REAR 按完整 Session lifecycle 隔离数据，因此当前 DSH Session 的这三个值必须完全一致。若宿主不从持久化层恢复该 Session，请用这些 metadata 创建测试 Session。
 
+## Benchmark 组合
+
+- `rear-dashboard-benchmark@2026.08`
+- `tool-use-safety@2026.08`
+- `long-context-retrieval@2026.07`
+
+候选数据刻意保留不同权衡：baseline 延迟最低；safe-tools 在工具安全上领先；quality-v2 等权平均得分最高，但在 destructive-guard 上超过 0.01 回归红线。
+
 ## 挂载
 
 ```yaml
@@ -28,4 +36,4 @@ npm run fixture:dashboard -- --output ./work/rear-dashboard-test
 npm run fixture:dashboard -- --session-id my-session --session-created-at 1787293200000 --session-cwd /workspace/demo
 ```
 
-生成命令会完整替换目标目录。默认数据是确定性的，包含 3 条历史 refinement、2 次迭代、3 个候选版本，以及 improved/regressed/unchanged、invalid、timed-out、missing、provider-only、corrupt 和分页 raw evidence 场景。
+生成命令会完整替换目标目录。默认数据是确定性的，包含 3 条历史 refinement、2 次迭代、3 个候选版本和 3 套 benchmark。数据覆盖跨 benchmark 提升、回退红线、质量/延迟权衡，以及 improved/regressed/unchanged、invalid、timed-out、missing、provider-only、corrupt 和分页 raw evidence 场景。

@@ -9,6 +9,12 @@ export type RefinementKey =
   | 'overview.kicker' | 'overview.bestScore' | 'overview.leadingCombination'
   | 'overview.harnessVersion' | 'overview.benchmarkVersion' | 'overview.openBreakdown'
   | 'overview.noScore' | 'overview.history' | 'overview.updated' | 'overview.provisional'
+  | 'portfolio.kicker' | 'portfolio.dashboard' | 'portfolio.title' | 'portfolio.benchmarks'
+  | 'portfolio.guardrails' | 'portfolio.guardrailHint' | 'portfolio.leadingDelta'
+  | 'portfolio.candidate' | 'portfolio.meanReward' | 'portfolio.meanDelta'
+  | 'portfolio.pareto' | 'portfolio.tradeoff' | 'portfolio.paretoTitle'
+  | 'portfolio.latency' | 'portfolio.paretoHint' | 'portfolio.noData'
+  | 'portfolio.selectedBenchmark'
   | 'breakdown.kicker' | 'breakdown.experiments' | 'breakdown.tasks'
   | 'breakdown.validRuns' | 'breakdown.taskCoverage' | 'breakdown.score'
   | 'breakdown.noScore' | 'breakdown.noTasks' | 'breakdown.iteration' | 'breakdown.all'
@@ -55,6 +61,16 @@ export const en: Record<RefinementKey, string> = {
   'overview.benchmarkVersion': 'Benchmark version', 'overview.openBreakdown': 'Open breakdown',
   'overview.noScore': 'Waiting for valid observations', 'overview.history': 'Refinement history',
   'overview.updated': 'Updated', 'overview.provisional': 'Provisional',
+  'portfolio.kicker': 'Multi-objective evaluation', 'portfolio.dashboard': 'Benchmark portfolio',
+  'portfolio.title': 'Benchmark portfolio', 'portfolio.benchmarks': 'Benchmarks',
+  'portfolio.guardrails': 'Guardrails passed', 'portfolio.guardrailHint': 'Regression limit',
+  'portfolio.leadingDelta': 'Leading mean delta', 'portfolio.candidate': 'Candidate',
+  'portfolio.meanReward': 'Equal-weight mean', 'portfolio.meanDelta': 'Mean Δ',
+  'portfolio.pareto': 'Pareto', 'portfolio.tradeoff': 'Quality × latency',
+  'portfolio.paretoTitle': 'Trade-off frontier', 'portfolio.latency': 'Mean latency',
+  'portfolio.paretoHint': 'Outlined points are on the Pareto frontier',
+  'portfolio.noData': 'Benchmark results will appear as evaluations settle',
+  'portfolio.selectedBenchmark': 'Selected benchmark',
   'breakdown.kicker': 'Experiment breakdown', 'breakdown.experiments': 'Experiment directions',
   'breakdown.tasks': 'Task results', 'breakdown.validRuns': 'Valid runs',
   'breakdown.taskCoverage': 'Task coverage', 'breakdown.score': 'Score',
@@ -114,6 +130,16 @@ export const zh: Record<RefinementKey, string> = {
   'overview.benchmarkVersion': 'Benchmark 版本', 'overview.openBreakdown': '查看实验明细',
   'overview.noScore': '等待有效评分', 'overview.history': '优化记录',
   'overview.updated': '更新于', 'overview.provisional': '临时结果',
+  'portfolio.kicker': '多目标评测', 'portfolio.dashboard': 'Benchmark 组合看板',
+  'portfolio.title': '多 Benchmark 优化', 'portfolio.benchmarks': 'Benchmark 数',
+  'portfolio.guardrails': '回归红线通过', 'portfolio.guardrailHint': '单项回退上限',
+  'portfolio.leadingDelta': '领先方案平均差值', 'portfolio.candidate': '候选方案',
+  'portfolio.meanReward': '等权平均得分', 'portfolio.meanDelta': '平均差值',
+  'portfolio.pareto': 'Pareto 前沿', 'portfolio.tradeoff': '质量 × 延迟',
+  'portfolio.paretoTitle': '质量与延迟权衡', 'portfolio.latency': '平均延迟',
+  'portfolio.paretoHint': '描边节点位于 Pareto 前沿',
+  'portfolio.noData': '评测完成后将在这里显示 Benchmark 组合结果',
+  'portfolio.selectedBenchmark': '当前 Benchmark',
   'breakdown.kicker': '实验明细', 'breakdown.experiments': '实验方向',
   'breakdown.tasks': '任务结果', 'breakdown.validRuns': '有效运行',
   'breakdown.taskCoverage': '任务覆盖', 'breakdown.score': '得分',
