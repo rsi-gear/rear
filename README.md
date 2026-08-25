@@ -117,10 +117,10 @@ npm test
 npm run pack:check
 ```
 
-For repeatable UI testing, [`fixtures/dashboard-data`](fixtures/dashboard-data)
-contains a mountable JSON-storage snapshot and matching Hitch evidence. Its
-README records the exact demo Session lifecycle and volume/config paths. Reset
-the snapshot deterministically with:
+For repeatable UI testing, generate a mountable JSON-storage snapshot and
+matching Hitch evidence under `fixtures/dashboard-data`. The generated fixture
+is intentionally ignored by Git and its generated README records the exact
+demo Session lifecycle and volume/config paths:
 
 ```bash
 npm run fixture:dashboard

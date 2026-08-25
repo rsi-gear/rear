@@ -1,9 +1,0 @@
-{"type":"session","version":0,"id":"trajectory-run_0000000000000000000000000000000d","createdAt":1787386380000}
-{"type":"turn/start","seq":0,"time":1787386380000,"data":{"turn":1}}
-{"type":"step/start","seq":1,"time":1787386380020,"data":{"turn":1,"step":1}}
-{"type":"assistant/chunk","seq":2,"time":1787386380065,"data":{"turn":1,"step":1,"chunk":{"type":"text","text":"Inspecting fixture input…"}}}
-{"type":"tool/call","seq":3,"time":1787386380090,"data":{"turn":1,"step":1,"id":"call-13","name":"fixture.verify","arguments":{"task":"unicode-paths"}}}
-{"type":"tool/result","seq":4,"time":1787386380130,"data":{"turn":1,"step":1,"id":"call-13","result":{"ok":true,"score":0.7}}}
-{"type":"assistant/message","seq":5,"time":1787386380180,"data":{"turn":1,"step":1,"message":{"content":[{"type":"text","text":"Completed unicode-paths fixture run."}],"source":{"provider":"deepseek","model":"deepseek-v3.2-snapshot-2026-08"}},"usage":{"inputTokens":133,"outputTokens":41}}}
-{"type":"step/end","seq":6,"time":1787386380200,"data":{"turn":1,"step":1}}
-{"type":"turn/end","seq":7,"time":1787386380220,"data":{"turn":1,"reason":{"kind":"completed"}}}

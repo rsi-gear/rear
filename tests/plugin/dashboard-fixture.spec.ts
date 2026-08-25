@@ -1,7 +1,10 @@
-import { readFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { afterEach, describe, expect, it } from 'vitest'
+import { promisify } from 'node:util'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
 import Storage from '@deepseek-ai/dsh-storage'
@@ -18,8 +21,19 @@ interface FixtureManifest {
   readonly benchmarks: readonly { readonly id: string; readonly revision: string }[]
 }
 
-const fixtureRoot = fileURLToPath(new URL('../../fixtures/dashboard-data/', import.meta.url))
+const run = promisify(execFile)
+const fixtureGenerator = fileURLToPath(new URL('../../scripts/generate-dashboard-fixture.mjs', import.meta.url))
+let fixtureRoot = ''
 let context: Context | undefined
+
+beforeAll(async () => {
+  fixtureRoot = await mkdtemp(join(tmpdir(), 'rear-dashboard-fixture-'))
+  await run(process.execPath, [fixtureGenerator, '--output', fixtureRoot])
+})
+
+afterAll(async () => {
+  if (fixtureRoot !== '') await rm(fixtureRoot, { recursive: true, force: true })
+})
 
 afterEach(async () => {
   await context?.fiber.dispose()
