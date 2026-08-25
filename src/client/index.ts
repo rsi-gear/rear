@@ -7,21 +7,19 @@ import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-trajectory/client'
 import { RefinementController, type RefinementRemoteClient } from './controller.ts'
-import { RefineCommandCard, RefinementView, type RefinementInjected } from './RefinementView.tsx'
-import { refinementLinkDefinition, refinementLinksViewDefinition } from './refinement-links.ts'
+import { RefinementView, type RefinementInjected } from './RefinementView.tsx'
 import { en, zh } from './locales.ts'
 import { mountStyles } from './styles.ts'
 
 export { RefinementController } from './controller.ts'
 export type { RefinementRemoteClient, RefinementViewState } from './controller.ts'
-export { RefineCommandCard, RefinementView } from './RefinementView.tsx'
+export { RefinementView } from './RefinementView.tsx'
 
 const NS = 'refinement'
 
-/** Services required by the refinement view, rich command card, and controller directory. */
+/** Services required by the read-only refinement view and controller directory. */
 export const inject = [
   'slots', 'sessions', 'connection', 'locale', 'layout',
-  'conversationEvents', 'conversationViews',
 ]
 
 function abortError(): Error {
@@ -41,7 +39,6 @@ function remoteAdapter(ctx: Context): RefinementRemoteClient {
   return {
     list: (request, signal) => call('list', request, signal),
     get: (request, signal) => call('get', request, signal),
-    cancel: (request, signal) => call('cancel', request, signal),
     evaluation: (request, signal) => call('evaluation', request, signal),
     trajectory: (request, signal) => call('trajectory', request, signal),
     providerEvidence: (request, signal) => call('provider-evidence', request, signal),
@@ -49,11 +46,9 @@ function remoteAdapter(ctx: Context): RefinementRemoteClient {
   }
 }
 
-/** Mount the hidden link projection, controller directory, view, and rich command renderer. */
+/** Mount the controller directory and read-only Gear experiment view. */
 export function apply(ctx: Context): void {
   ctx.effect(mountStyles, 'ui-refinement: styles')
-  ctx.conversationEvents.register(refinementLinkDefinition)
-  ctx.conversationViews.register(refinementLinksViewDefinition)
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-refinement: dictionaries')
   const remote = remoteAdapter(ctx)
   const controllers = new Map<SessionId, RefinementController>()
@@ -76,7 +71,6 @@ export function apply(ctx: Context): void {
       openTask: taskKey => controller.openTask(taskKey),
       selectRuns: runIds => controller.selectRuns(runIds),
       back: () => { controller.back() },
-      cancel: () => controller.cancel(),
       loadProviderEvidence: (runId, fileOrdinal, cursor) => controller.loadProviderEvidence(runId, fileOrdinal, cursor),
       closeProviderEvidence: runId => { controller.closeProviderEvidence(runId) },
       closeDetails: () => { ctx.layout.closeDetails() },
@@ -103,10 +97,4 @@ export function apply(ctx: Context): void {
     label: () => t('view.refinement'),
     inject: (sessionId: SessionId): RefinementInjected => injectFor(sessionId),
   }, RefinementView))
-  ctx.slots.inject('conversation.chat.commandview', () => ctx.slots.register({
-    name: 'conversation.chat.commandview',
-    key: 'refine',
-    locale: NS,
-    inject: (sessionId: SessionId): RefinementInjected => injectFor(sessionId),
-  }, RefineCommandCard))
 }

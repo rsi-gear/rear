@@ -14,7 +14,6 @@ const getRequest = z.object({ sessionId: session, refinementId: refinement })
 const schemas = {
   list: z.object({ sessionId: session }),
   get: getRequest,
-  cancel: getRequest.extend({ ifVersion: z.uuid() }),
   evaluation: getRequest.extend({
     iterationId: z.string().min(1),
     dimension: z.enum(['harness', 'model']),
@@ -107,7 +106,6 @@ export function mountRefinementRpc(
       switch (endpoint) {
         case 'list': return { ok: true, value: runtime.list(schemas.list.parse(payload) as never) }
         case 'get': return { ok: true, value: runtime.get(schemas.get.parse(payload) as never) }
-        case 'cancel': return { ok: true, value: await runtime.cancel(schemas.cancel.parse(payload) as never) }
         case 'evaluation': return { ok: true, value: await runtime.evaluation(schemas.evaluation.parse(payload) as never) }
         case 'trajectory': return { ok: true, value: await runtime.trajectory(schemas.trajectory.parse(payload) as never) }
         case 'provider-evidence': return {

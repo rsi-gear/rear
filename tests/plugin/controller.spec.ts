@@ -57,7 +57,6 @@ function remote(records: RefinementRecordV1[]): RefinementRemoteClient {
       ok: true as const,
       value: records.find(value => value.id === request.refinementId) ?? records[0] as RefinementRecordV1,
     })),
-    cancel: vi.fn(async () => ({ ok: false as const, error: { code: 'cancel-unavailable' as const, message: 'unused' } })),
     evaluation: vi.fn(async () => ({ ok: false as const, error: { code: 'evaluation-not-found' as const, message: 'unused' } })),
     trajectory: vi.fn(async () => ({ ok: false as const, error: { code: 'trajectory-not-found' as const, message: 'unused' } })),
     providerEvidence: vi.fn(async () => ({ ok: false as const, error: { code: 'trajectory-not-found' as const, message: 'unused' } })),

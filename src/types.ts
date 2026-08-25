@@ -6,9 +6,9 @@
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { SessionHeader, SessionId } from '@deepseek-ai/dsh-session/types'
 
-/** Identifies one DSH-owned refinement. */
+/** Identifies one Gear evolution projected into the Rear view. */
 export type RefinementId = Branded<'RefinementId'>
-/** Identifies one ordered refinement iteration. */
+/** Identifies one Gear round projected into the Rear view. */
 export type RefinementIterationId = Branded<'RefinementIterationId'>
 /** Identifies one candidate inside a refinement lineage. */
 export type RefinementCandidateId = Branded<'RefinementCandidateId'>
@@ -16,19 +16,19 @@ export type RefinementCandidateId = Branded<'RefinementCandidateId'>
 export type HitchEvalId = Branded<'HitchEvalId'>
 /** Identifies one Hitch run without exposing its storage location. */
 export type HitchRunId = Branded<'HitchRunId'>
-/** Equality-only token replaced by every material record mutation. */
+/** Equality-only token derived from the current Gear registry entry and rounds. */
 export type RefinementVersion = Branded<'RefinementVersion'>
 /** Equality-only invalidation token carried by change notifications. */
 export type RefinementChangeToken = Branded<'RefinementChangeToken'>
 
-/** Exact persisted Session lifecycle that owns a refinement. */
+/** DSH Session lifecycle that scopes one browser controller and read request. */
 export interface RefinementSessionIdentity {
   readonly sessionId: SessionId
   readonly createdAt: number
   readonly cwd?: string
 }
 
-/** Durable refinement lifecycle. */
+/** Read-only projection of the Gear evolution lifecycle. */
 export type RefinementStatus =
   | 'queued'
   | 'running'
@@ -54,7 +54,7 @@ export interface RefinementCandidateRecord {
   readonly createdAt: number
 }
 
-/** One authoritative Hitch evaluation reference associated by a driver. */
+/** One authoritative Hitch evaluation reference associated by Gear evidence. */
 export interface RefinementEvaluationRef {
   readonly providerId: string
   readonly evalId: HitchEvalId
@@ -76,12 +76,13 @@ export interface RefinementIterationRecord {
   readonly failure?: RefinementFailure
 }
 
-/** Complete DSH-owned sidecar state for one refinement. */
+/** Complete read-only Gear evolution projection used by the existing workbench UI. */
 export interface RefinementRecordV1 {
   readonly schemaVersion: 1
   readonly id: RefinementId
   readonly session: RefinementSessionIdentity
   readonly objective: string | null
+  /** Compatibility source descriptor; the Gear-backed runtime always reports `gear`. */
   readonly driver: {
     readonly id: string
     readonly operationId: string | null
@@ -229,17 +230,6 @@ export interface RefinementProviderEvidencePage {
   readonly nextCursor: string | null
 }
 
-/** Start request accepted from the `/refine` consumer. */
-export interface RefinementStartRequest {
-  readonly objective: string | null
-}
-
-/** Durable start acknowledgement and its linking Session event. */
-export interface RefinementStartValue {
-  readonly refinementId: RefinementId
-  readonly sourceEventSeq: number
-}
-
 /** List request for one exact persisted Session lifecycle. */
 export interface RefinementListRequest {
   readonly sessionId: SessionId
@@ -254,17 +244,6 @@ export interface RefinementListValue {
 export interface RefinementGetRequest {
   readonly sessionId: SessionId
   readonly refinementId: RefinementId
-}
-
-/** Cancel request with compare-and-set protection. */
-export interface RefinementCancelRequest extends RefinementGetRequest {
-  readonly ifVersion: RefinementVersion
-}
-
-/** Cancellation acknowledgement. */
-export interface RefinementCancelValue {
-  readonly state: 'stopped' | 'still-running' | 'already-terminal'
-  readonly record: RefinementRecordV1
 }
 
 /** Evidence request for one selected iteration. */
@@ -289,17 +268,11 @@ export interface RefinementProviderEvidenceRequest extends RefinementTrajectoryR
 export interface RefinementBusinessFailure {
   readonly code:
     | 'refinement-not-found'
-    | 'session-lifecycle-mismatch'
-    | 'driver-unavailable'
     | 'evidence-provider-unavailable'
     | 'evaluation-not-found'
     | 'run-not-found'
     | 'trajectory-not-found'
     | 'trajectory-corrupt'
-    | 'version-conflict'
-    | 'already-terminal'
-    | 'cancel-unavailable'
-    | 'objective-too-large'
     | 'response-too-large'
   readonly message: string
 }
@@ -316,27 +289,16 @@ export interface RefinementRejected {
   readonly error: RefinementBusinessFailure
 }
 
-/** Start result. */
-export type RefinementStartResult = RefinementSuccess<RefinementStartValue> | RefinementRejected
 /** List result. */
 export type RefinementListResult = RefinementSuccess<RefinementListValue> | RefinementRejected
 /** Detail result. */
 export type RefinementGetResult = RefinementSuccess<RefinementRecordV1> | RefinementRejected
-/** Cancel result. */
-export type RefinementCancelResult = RefinementSuccess<RefinementCancelValue> | RefinementRejected
 /** Evaluation result. */
 export type RefinementEvaluationResult = RefinementSuccess<RefinementEvaluationView> | RefinementRejected
 /** Canonical trajectory result. */
 export type RefinementTrajectoryResult = RefinementSuccess<CanonicalTrajectoryDocument> | RefinementRejected
 /** Provider evidence result. */
 export type RefinementProviderEvidenceResult = RefinementSuccess<RefinementProviderEvidencePage> | RefinementRejected
-
-declare module '@deepseek-ai/dsh-session/types' {
-  interface SessionEventMap {
-    /** Required log-only link from one Session lifecycle to its refinement sidecar. */
-    'refinement/created': { refinementId: RefinementId }
-  }
-}
 
 declare module '@deepseek-ai/cordis' {
   interface Events {

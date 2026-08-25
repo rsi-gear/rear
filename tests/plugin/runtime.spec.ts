@@ -1,23 +1,20 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { dirname, join } from 'node:path'
+import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import type { Agent } from '@deepseek-ai/dsh-agent'
 import SessionStore, { SessionId } from '@deepseek-ai/dsh-session'
-import Storage from '@deepseek-ai/dsh-storage'
-import * as StorageDomain from '@deepseek-ai/dsh-storage-domain'
-import * as StorageJson from '@deepseek-ai/dsh-storage-json'
 import RefinementRuntime from '../../src/runtime.ts'
-import type {
-  RefinementDriver,
-  RefinementDriverOperation,
-  RefinementEvidenceProvider,
-} from '../../src/providers.ts'
+import type { HitchRunId, RefinementId, RefinementIterationId } from '../../src/types.ts'
 
 interface Harness {
   readonly ctx: Context
   readonly root: string
+  readonly sessionId: ReturnType<typeof SessionId>
+  readonly evolutionId: RefinementId
+  readonly roundId: RefinementIterationId
+  readonly candidateRunId: HitchRunId
 }
 
 const harnesses: Harness[] = []
@@ -29,218 +26,213 @@ afterEach(async () => {
     .map(root => rm(root, { recursive: true, force: true })))
 })
 
-async function harness(): Promise<Harness> {
-  const root = await mkdtemp(join(tmpdir(), 'dsh-refinement-'))
+async function json(path: string, value: unknown): Promise<void> {
+  await mkdir(dirname(path), { recursive: true })
+  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
+}
+
+function digest(content: string): string {
+  return `sha256:${createHash('sha256').update(content).digest('hex')}`
+}
+
+function canonical(runId: string): string {
+  const now = 1_700_000_000_000
+  return [
+    { type: 'session', version: 0, id: `session-${runId}`, createdAt: now },
+    { type: 'turn/start', seq: 0, time: now, data: { turn: 1 } },
+    { type: 'assistant/message', seq: 1, time: now + 1, data: { message: { content: [{ type: 'text', text: 'done' }] } } },
+    { type: 'turn/end', seq: 2, time: now + 2, data: { turn: 1 } },
+  ].map(value => JSON.stringify(value)).join('\n') + '\n'
+}
+
+async function hitchEvaluation(
+  root: string,
+  evalId: string,
+  runId: string,
+  trialId: string,
+  harnessId: string,
+  reward: number,
+): Promise<void> {
+  const runRoot = join(root, 'runs', runId)
+  const content = canonical(runId)
+  const trajectoryPath = 'trajectory/canonical/session.jsonl'
+  await mkdir(join(runRoot, 'trajectory/canonical'), { recursive: true })
+  await writeFile(join(runRoot, trajectoryPath), content, 'utf8')
+  await json(join(runRoot, 'trajectory.ref.json'), {
+    schema_version: '2',
+    run_id: runId,
+    files: [{
+      role: 'canonical_session', path: trajectoryPath, media_type: 'application/x-ndjson',
+      sha256: digest(content), bytes: Buffer.byteLength(content),
+    }],
+  })
+  await json(join(runRoot, 'manifest.json'), {
+    schema_version: '1',
+    run_id: runId,
+    context: {
+      kind: 'benchmark_task', benchmark_id: 'gear-benchmark', benchmark_revision: 'revision-1',
+      task_id: 'task-1', task_digest: 'task-digest', verifier_identity: 'verifier-v1',
+    },
+    parent: { kind: 'eval', eval_id: evalId, trial_id: trialId, attempt: 1 },
+    status: 'succeeded',
+    harness: { requested_ref: harnessId, harness_id: harnessId, revision_identity: `revision-${harnessId}` },
+    model: { requested_id: 'deepseek-chat', provider: 'test', effective_id: 'model-snapshot', identity_resolved: true },
+    protocol: { timeout_ms: 1_000 },
+    observation: { status: 'valid', reward },
+    trajectory_ref: 'trajectory.ref.json',
+  })
+  await json(join(root, 'evals', evalId, 'result.json'), {
+    schema_version: '1', eval_id: evalId,
+    benchmark_id: 'gear-benchmark', benchmark_revision: 'revision-1', status: 'succeeded',
+    trials: [{
+      trial_id: trialId, run_id: runId, task_id: 'task-1', attempt: 1,
+      observation_status: 'valid', reward,
+    }],
+  })
+}
+
+function evidence(evalId: string, runId: string, trialId: string, commit: string, reward: number) {
+  return {
+    provider: 'hitch-cli', conditionId: 'condition-1', effectiveConfigDigest: 'config-1',
+    evalId, dataset: 'seed', requestedCommit: commit, actualCommit: commit,
+    revisionIdentity: `revision-${commit}`, primaryReward: reward,
+    summary: { total: 1, passed: reward > 0 ? 1 : 0, failed: reward > 0 ? 0 : 1, score: reward },
+    trials: [{
+      taskName: 'task-1', trialName: trialId, runId, attempt: 1,
+      status: 'completed', rewards: { reward },
+    }],
+  }
+}
+
+async function harness(forgedCandidateRun = false): Promise<Harness> {
+  const root = await mkdtemp(join(tmpdir(), 'rear-gear-runtime-'))
+  const gearRoot = join(root, 'gear')
+  const hitchRoot = join(root, 'hitch')
+  await mkdir(gearRoot, { recursive: true })
+  await mkdir(hitchRoot, { recursive: true })
+  const evolution = 'evolution-1'
+  const round = 'round-1'
+  const baselineEval = `eval_${'1'.repeat(32)}`
+  const candidateEval = `eval_${'2'.repeat(32)}`
+  const baselineRun = `run_${'1'.repeat(32)}`
+  const candidateRun = `run_${'2'.repeat(32)}`
+  const baselineCommit = 'a'.repeat(40)
+  const candidateCommit = 'b'.repeat(40)
+  await hitchEvaluation(hitchRoot, baselineEval, baselineRun, 'trial-baseline', 'baseline', 0)
+  await hitchEvaluation(hitchRoot, candidateEval, candidateRun, 'trial-candidate', 'candidate', 1)
+  const createdAt = '2026-08-25T00:00:00.000Z'
+  const updatedAt = '2026-08-25T00:01:00.000Z'
+  await json(join(gearRoot, 'registry.json'), {
+    schemaVersion: 1,
+    evolutions: [{ evolutionId: evolution, name: 'Improve tool safety', status: 'active', createdAt, updatedAt }],
+  })
+  await json(join(gearRoot, 'evolutions', evolution, 'rounds', `${round}.json`), {
+    evolutionId: evolution,
+    roundId: round,
+    batchId: 'batch-1',
+    roundIndex: 1,
+    roundCount: 1,
+    status: 'accepted',
+    createdAt,
+    updatedAt,
+    targetHarnessRef: baselineCommit,
+    seedTaskRef: 'seed',
+    plan: {
+      seed: { model: 'deepseek-chat' },
+      heldOut: { model: 'deepseek-chat' },
+    },
+    parentAllocations: [{
+      candidateId: 'candidate-1', parentCandidateId: 'initial-baseline', parentHarnessRef: baselineCommit,
+    }],
+    parentBaselines: [{
+      parentCandidateId: 'initial-baseline', parentHarnessRef: baselineCommit,
+      evidence: evidence(baselineEval, baselineRun, 'trial-baseline', baselineCommit, 0),
+    }],
+    candidatePool: [{
+      candidateId: 'candidate-1', parentHarnessRef: baselineCommit,
+      parentCandidateIds: ['initial-baseline'], status: 'selected',
+      sealedVersion: { commitOid: candidateCommit },
+      seedEvaluation: evidence(
+        candidateEval,
+        forgedCandidateRun ? `run_${'f'.repeat(32)}` : candidateRun,
+        'trial-candidate',
+        candidateCommit,
+        1,
+      ),
+    }],
+    promotionCandidateId: 'candidate-1',
+    promotedCandidateId: 'candidate-1',
+  })
   const ctx = new Context()
   await ctx.plugin(SessionStore)
-  await ctx.plugin(Storage)
-  await ctx.plugin(StorageJson, { root })
-  await ctx.plugin(StorageDomain, { backend: 'json' })
+  const sessionId = SessionId('rear-session')
+  const sessions = ctx.get('sessions') as SessionStore
+  sessions.create(sessionId, { meta: { createdAt: 42, cwd: '/fixture' } })
   await ctx.plugin(RefinementRuntime, {
-    driver: 'fixture-driver',
-    evidenceProvider: 'fixture-evidence',
-    objectiveMaxBytes: 64,
+    gear: { root: gearRoot, watchDebounceMs: 5 },
+    hitch: { id: 'hitch', root: hitchRoot, watchDebounceMs: 5 },
     trajectoryResponseMaxBytes: 65_536,
     providerEvidencePageMaxBytes: 4_096,
   })
-  const value = { ctx, root }
+  const value: Harness = {
+    ctx,
+    root,
+    sessionId,
+    evolutionId: `gear-evolution:${evolution}` as RefinementId,
+    roundId: `gear-round:${round}` as RefinementIterationId,
+    candidateRunId: candidateRun as HitchRunId,
+  }
   harnesses.push(value)
   return value
 }
 
-async function persistentHarness(root: string, sessionId: ReturnType<typeof SessionId>): Promise<Harness> {
-  const ctx = new Context()
-  await ctx.plugin(SessionStore)
-  await ctx.plugin(Storage)
-  await ctx.plugin(StorageJson, { root })
-  await ctx.plugin(StorageDomain, { backend: 'json' })
-  ctx.sessions.create(sessionId, { meta: { createdAt: 42, cwd: '/fixture' } })
-  await ctx.plugin(RefinementRuntime, {
-    driver: 'fixture-driver',
-    evidenceProvider: 'fixture-evidence',
-    objectiveMaxBytes: 64,
-    trajectoryResponseMaxBytes: 65_536,
-    providerEvidencePageMaxBytes: 4_096,
-  })
-  const value = { ctx, root }
-  harnesses.push(value)
-  return value
-}
-
-function provider(): RefinementEvidenceProvider {
-  return {
-    id: 'fixture-evidence',
-    available: () => true,
-    evaluation: vi.fn(() => Promise.reject(new Error('unused'))),
-    compare: vi.fn(() => Promise.reject(new Error('unused'))),
-    trajectory: vi.fn(() => Promise.reject(new Error('unused'))),
-    providerEvidence: vi.fn(() => Promise.reject(new Error('unused'))),
-    watch: vi.fn(() => () => {}),
-  }
-}
-
-function driver(captured: RefinementDriverOperation[], settle: Promise<void>): RefinementDriver {
-  return {
-    id: 'fixture-driver',
-    available: () => true,
-    run: vi.fn(async (operation: RefinementDriverOperation) => {
-      captured.push(operation)
-      await settle
-    }),
-    resume: vi.fn(async (operation: RefinementDriverOperation) => {
-      captured.push(operation)
-      await settle
-    }),
-    cancel: vi.fn(async () => 'stopped' as const),
-  }
-}
-
-describe('RefinementRuntime', () => {
-  it('requires the configured providers and rejects duplicate provider ids', async () => {
-    const { ctx } = await harness()
-    const session = ctx.sessions.create(SessionId('provider-selection'))
-    const agent = { session } as Agent
-    await expect(ctx.refinements.start(agent, { objective: null }, new AbortController().signal)).resolves.toMatchObject({
-      ok: false,
-      error: { code: 'driver-unavailable' },
-    })
-    const evidence = provider()
-    const dispose = ctx.refinements.registerEvidenceProvider(evidence)
-    expect(() => ctx.refinements.registerEvidenceProvider(evidence)).toThrow(/already registered/u)
-    dispose()
+describe('Gear-backed RefinementRuntime', () => {
+  it('exposes no start or cancel control-plane methods', async () => {
+    const value = await harness()
+    expect('start' in value.ctx.refinements).toBe(false)
+    expect('cancel' in value.ctx.refinements).toBe(false)
   })
 
-  it('admits before driver settlement, appends one link, serializes CAS mutations, and rejects terminal writes', async () => {
-    const { ctx } = await harness()
-    const captured: RefinementDriverOperation[] = []
-    const settlement = Promise.withResolvers<undefined>()
-    ctx.refinements.registerEvidenceProvider(provider())
-    ctx.refinements.registerDriver(driver(captured, settlement.promise))
-    const session = ctx.sessions.create(SessionId('admission'))
-    const result = await ctx.refinements.start(
-      { session } as Agent,
-      { objective: 'reduce regressions' },
-      new AbortController().signal,
-    )
-    expect(result.ok).toBe(true)
-    expect(session.events.filter(event => event.type === 'refinement/created')).toHaveLength(1)
-    await vi.waitFor(() => { expect(captured).toHaveLength(1) })
-    const operation = captured[0] as RefinementDriverOperation
-    const first = await operation.capabilities.addCandidate(operation.record.version, {
-      role: 'baseline',
-      parentCandidateId: null,
-      requestedHarnessRef: 'baseline',
-      revisionIdentity: 'baseline-rev',
-      label: 'Baseline',
+  it('projects Gear experiments and resolves their exact Hitch trajectory_ref', async () => {
+    const value = await harness()
+    const listed = value.ctx.refinements.list({ sessionId: value.sessionId })
+    expect(listed).toMatchObject({
+      ok: true,
+      value: { records: [{ id: value.evolutionId, status: 'completed', iterationCount: 1 }] },
     })
-    await expect(operation.capabilities.addCandidate(operation.record.version, {
-      role: 'candidate',
-      parentCandidateId: null,
-      requestedHarnessRef: 'stale',
-      revisionIdentity: null,
-      label: 'Stale',
-    })).rejects.toThrow(/version conflict/u)
-    const terminal = await operation.capabilities.finish(first.version, 'completed')
-    await expect(operation.capabilities.addCandidate(terminal.version, {
-      role: 'candidate',
-      parentCandidateId: first.candidates[0]?.id ?? null,
-      requestedHarnessRef: 'late',
-      revisionIdentity: null,
-      label: 'Late',
-    })).rejects.toThrow(/terminal/u)
-    settlement.resolve(undefined)
+    const detail = value.ctx.refinements.get({ sessionId: value.sessionId, refinementId: value.evolutionId })
+    if (!detail.ok) throw new Error(detail.error.message)
+    expect(detail.value).toMatchObject({
+      objective: 'Improve tool safety',
+      driver: { id: 'gear', operationId: 'evolution-1' },
+      iterations: [{ id: value.roundId, evaluationRefs: [{ benchmarkId: 'gear-benchmark' }, { benchmarkId: 'gear-benchmark' }] }],
+    })
+    const evaluated = await value.ctx.refinements.evaluation({
+      sessionId: value.sessionId,
+      refinementId: value.evolutionId,
+      iterationId: value.roundId,
+      dimension: 'harness',
+      referenceRunId: null,
+    })
+    expect(evaluated).toMatchObject({ ok: true, value: { comparison: { strict: true } } })
+    const trajectory = await value.ctx.refinements.trajectory({
+      sessionId: value.sessionId,
+      refinementId: value.evolutionId,
+      runId: value.candidateRunId,
+    })
+    expect(trajectory).toMatchObject({ ok: true, value: { runId: value.candidateRunId } })
+    if (!trajectory.ok) throw new Error(trajectory.error.message)
+    expect(trajectory.value.events.map(event => event.type)).toEqual([
+      'turn/start', 'assistant/message', 'turn/end',
+    ])
   })
 
-  it('hides an old sidecar when the same Session id starts a new lifecycle', async () => {
-    const { ctx } = await harness()
-    const captured: RefinementDriverOperation[] = []
-    const settlement = Promise.withResolvers<undefined>()
-    ctx.refinements.registerEvidenceProvider(provider())
-    ctx.refinements.registerDriver(driver(captured, settlement.promise))
-    const id = SessionId('reused-session')
-    let firstSession: ReturnType<typeof ctx.sessions.create> | undefined
-    const createFirst = Object.assign(
-      (child: Context): void => { firstSession = child.sessions.create(id, { meta: { createdAt: 1 } }) },
-      { inject: ['sessions'] },
-    )
-    const firstFiber = await ctx.plugin(createFirst)
-    const started = await ctx.refinements.start(
-      { session: firstSession } as unknown as Agent,
-      { objective: null },
-      new AbortController().signal,
-    )
-    if (!started.ok) throw new Error(started.error.message)
-    await firstFiber.dispose()
-    const createSecond = Object.assign(
-      (child: Context): void => { child.sessions.create(id, { meta: { createdAt: 2 } }) },
-      { inject: ['sessions'] },
-    )
-    await ctx.plugin(createSecond)
-    expect(ctx.refinements.list({ sessionId: id })).toEqual({ ok: true, value: { records: [] } })
-    expect(ctx.refinements.get({ sessionId: id, refinementId: started.value.refinementId })).toMatchObject({
-      ok: false,
-      error: { code: 'refinement-not-found' },
-    })
-    settlement.resolve(undefined)
+  it('fails closed when a Gear run id is not a member of its Hitch eval', async () => {
+    const value = await harness(true)
+    expect(() => value.ctx.refinements.get({
+      sessionId: value.sessionId,
+      refinementId: value.evolutionId,
+    })).toThrow(/run membership mismatch/u)
   })
 
-  it('rebuilds the Session index and resumes a persisted non-terminal operation after restart', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'dsh-refinement-restart-'))
-    const sessionId = SessionId('restart-session')
-    const first = await persistentHarness(root, sessionId)
-    const startedOperations: RefinementDriverOperation[] = []
-    first.ctx.refinements.registerEvidenceProvider(provider())
-    first.ctx.refinements.registerDriver({
-      id: 'fixture-driver',
-      available: () => true,
-      run: vi.fn(async (operation: RefinementDriverOperation) => {
-        startedOperations.push(operation)
-        await operation.capabilities.setOperationId(operation.record.version, 'external-operation')
-        await new Promise<void>((resolve) => {
-          operation.signal.addEventListener('abort', () => { resolve() }, { once: true })
-        })
-      }),
-      resume: vi.fn(() => Promise.reject(new Error('unused'))),
-      cancel: vi.fn(async () => 'stopped' as const),
-    })
-    const session = first.ctx.sessions.get(sessionId)
-    if (session === undefined) throw new Error('restart fixture Session was not created')
-    const started = await first.ctx.refinements.start(
-      { session } as Agent,
-      { objective: 'persist me' },
-      new AbortController().signal,
-    )
-    if (!started.ok) throw new Error(started.error.message)
-    await vi.waitFor(() => {
-      expect(first.ctx.refinements.get({ sessionId, refinementId: started.value.refinementId })).toMatchObject({
-        ok: true,
-        value: { status: 'running', driver: { operationId: 'external-operation' } },
-      })
-    })
-    await first.ctx.fiber.dispose()
-
-    const second = await persistentHarness(root, sessionId)
-    const resumed: RefinementDriverOperation[] = []
-    second.ctx.refinements.registerEvidenceProvider(provider())
-    second.ctx.refinements.registerDriver({
-      id: 'fixture-driver',
-      available: () => true,
-      run: vi.fn(() => Promise.reject(new Error('unused'))),
-      resume: vi.fn(async (operation: RefinementDriverOperation) => {
-        resumed.push(operation)
-        await operation.capabilities.finish(operation.record.version, 'completed')
-      }),
-      cancel: vi.fn(async () => 'stopped' as const),
-    })
-    await vi.waitFor(() => {
-      expect(second.ctx.refinements.list({ sessionId })).toMatchObject({
-        ok: true,
-        value: { records: [{ id: started.value.refinementId, status: 'completed' }] },
-      })
-    })
-    expect(startedOperations).toHaveLength(1)
-    expect(resumed).toHaveLength(1)
-    expect(resumed[0]?.agent).toBeNull()
-    expect(resumed[0]?.record.driver.operationId).toBe('external-operation')
-  })
 })

@@ -14,6 +14,7 @@ describe('published DSH bundle', () => {
       }
       exports?: Record<string, unknown>
       files?: string[]
+      peerDependencies?: Record<string, string>
     }
     expect(pkg.name).toBe('dsh-plugin-rear')
     expect(pkg.dsh?.bundle?.patch).toBe('./cordis.patch.yml')
@@ -21,6 +22,9 @@ describe('published DSH bundle', () => {
     expect(pkg.dsh?.client?.inject).toContain('@deepseek-ai/dsh-client-ui-trajectory')
     expect(pkg.exports).toHaveProperty('./client')
     expect(pkg.files).toContain('cordis.patch.yml')
+    expect(pkg.peerDependencies).not.toHaveProperty('@deepseek-ai/dsh-agent')
+    expect(pkg.peerDependencies).not.toHaveProperty('@deepseek-ai/dsh-commands')
+    expect(pkg.peerDependencies).not.toHaveProperty('@deepseek-ai/dsh-storage-domain')
 
     const patch = load(await readFile(resolve(root, 'cordis.patch.yml'), 'utf8'))
     expect(patch).toEqual([{ insert: [{ id: 'rear-refinement', name: 'dsh-plugin-rear', disabled: true }] }])

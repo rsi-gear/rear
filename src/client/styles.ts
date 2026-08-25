@@ -5,7 +5,7 @@ export const REFINEMENT_STYLES = `
 .rear-refinement-root h1,.rear-refinement-root h2,.rear-refinement-root h3,.rear-refinement-root p{margin-top:0}
 .rear-refinement-root h2{font-size:20px;line-height:1.2;letter-spacing:-.02em}
 .rear-refinement-root h3{font-size:15px}
-.rear-refinement-row,.rear-refinement-command{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.rear-refinement-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .rear-refinement-row{justify-content:flex-start}
 .rear-refinement-muted{display:block;color:var(--rear-muted)}
 .rear-refinement-error{margin:14px 0;padding:10px 12px;border:1px solid rgba(255,116,108,.24);border-left:3px solid var(--rear-red);border-radius:6px;color:#ffaaa5;background:rgba(255,116,108,.06)}
@@ -204,10 +204,8 @@ export const REFINEMENT_STYLES = `
 .rear-refinement-native-details>pre{flex:1;min-height:0;margin:0;padding:12px 12px calc(12px + var(--rear-trajectory-bottom-clearance));overflow:auto;color:var(--dsw-alias-label-primary,var(--rear-text));background:var(--dsw-alias-markdown-code-block,rgba(0,0,0,.18));font:11px/17px var(--ds-font-family-code,ui-monospace,SFMono-Regular,Consolas,monospace);white-space:pre-wrap;overflow-wrap:anywhere}
 .rear-refinement-card{padding:14px;border:1px solid var(--rear-line);border-radius:8px;background:rgba(255,255,255,.025)}
 .rear-refinement-raw{max-height:60vh;margin:0;padding:12px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
-.rear-refinement-command{padding:8px 10px;border:1px solid color-mix(in srgb,currentColor 15%,transparent);border-radius:8px}
-.rear-refinement-command-text{min-width:0;flex:1;color:var(--dsh-color-text-muted,#9a9ca3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rear-refinement-root button,.rear-refinement-command button{padding:6px 10px;border:1px solid var(--rear-line);border-radius:7px;color:inherit;background:rgba(255,255,255,.035);font:inherit;cursor:pointer;transition:border-color .16s,background .16s,transform .16s}
-.rear-refinement-root button:hover:not(:disabled),.rear-refinement-command button:hover:not(:disabled){border-color:rgba(255,255,255,.24);background:rgba(255,255,255,.065)}
+.rear-refinement-root button{padding:6px 10px;border:1px solid var(--rear-line);border-radius:7px;color:inherit;background:rgba(255,255,255,.035);font:inherit;cursor:pointer;transition:border-color .16s,background .16s,transform .16s}
+.rear-refinement-root button:hover:not(:disabled){border-color:rgba(255,255,255,.24);background:rgba(255,255,255,.065)}
 .rear-refinement-root button:active:not(:disabled){transform:translateY(1px)}
 .rear-refinement-root button:disabled{opacity:.4;cursor:default}
 .rear-refinement-meta{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 12px;margin:10px 0}

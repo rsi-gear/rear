@@ -1,140 +1,63 @@
 # dsh-plugin-rear
 
-REAR is an npm-installable DeepSeek Harness plugin that adds a Session-scoped
-Refine workbench backed by Hitch run-centered evidence. It is not a standalone
-web application and does not add a second data root, router, or server process.
+Rear is a read-only DeepSeek Harness workbench for experiments produced by Gear and trajectories persisted by Hitch.
 
-The package is dual-face:
+Gear is the only refinement control plane. It owns `/refine`, candidate generation, evaluation scheduling, promotion, and experiment state. Rear does not register `/refine`, inspect its command return value, persist a refinement sidecar, cancel experiments, or modify Gear state.
 
-- its package root is a Cordis Host plugin providing the durable refinement
-  sidecar, provider registries, `/refine`, Hitch evidence validation, and a
-  bounded Connection RPC channel;
-- `dsh-plugin-rear/client` is discovered through `dsh.client` metadata and
-  contributes the always-visible Refine conversation view and `/refine` card.
+## Data flow
 
-## Install
-
-Install it into the DSH Web profile the same way as other distributable DSH
-plugins:
-
-```bash
-dsh plugin --profile web add dsh-plugin-rear
+```text
+Gear registry + round state
+  evolutionId / roundId / evalId / runId
+                    │
+                    ▼
+Hitch evals/<evalId>/result.json
+                    │ exact run membership
+                    ▼
+Hitch runs/<runId>/manifest.json
+                    │ trajectory_ref
+                    ▼
+TrajectoryRef V2 → canonical trajectory file
 ```
 
-The bundled `cordis.patch.yml` intentionally adds a disabled row, so npm
-installation cannot start a local filesystem reader. Enable and configure the
-row in the selected profile:
+Rear reads `gear.root/registry.json` and `gear.root/evolutions/<evolutionId>/rounds/*.json`. For every Gear evaluation that contains persisted run IDs, it verifies that the Gear run set exactly matches the Hitch eval result. Hitch then verifies eval, trial, task, attempt, benchmark, run manifest, `trajectory_ref`, file path, byte count, and checksum before Rear exposes a trajectory.
+
+Rear never guesses a run path from a `/refine` response. Gear state supplies the authoritative experiment-to-evaluation association; Hitch supplies the authoritative evaluation-to-trajectory association.
+
+## Configuration
+
+The bundled Loader row is dormant. Enable it and provide explicit state roots and limits:
 
 ```yaml
 - id: rear-refinement
   name: dsh-plugin-rear
   config:
-    driver: your-refinement-driver
-    evidenceProvider: hitch
-    objectiveMaxBytes: 16384
     trajectoryResponseMaxBytes: 8388608
     providerEvidencePageMaxBytes: 262144
     changeWaitMs: 25000
+    gear:
+      root: /srv/dsh/refine-state
+      watchDebounceMs: 200
     hitch:
       id: hitch
-      root: /absolute/path/to/hitch-state
+      root: /srv/hitch-state
       watchDebounceMs: 200
 ```
 
-The Web profile must already provide `storageDomain`, `sessions`, `commands`,
-and `connection`, as the stock DSH Web profile does. `hitch.root` must contain
-the run-centered `evals/` and `runs/` directories.
+`gear.root` must be the same absolute directory configured as Gear's `evolutionState.stateRoot`. `hitch.root` must be the absolute Hitch run-centered state root. Both roots must already exist as real directories; symlinked roots and escaping evidence paths are rejected.
 
-## Driver composition
+The plugin watches both roots and asks connected views to perform an authoritative rescan after changes. Gear evolutions are global persisted experiments; the active DSH Session scopes only the browser controller, not experiment ownership.
 
-Candidate generation is deliberately not part of REAR. A driver plugin loaded
-after REAR registers one exact id:
-
-```ts
-import type { Context } from '@deepseek-ai/cordis'
-import type { RefinementDriver } from 'dsh-plugin-rear'
-
-export const inject = ['refinements']
-
-export function apply(ctx: Context): void {
-  const driver: RefinementDriver = {
-    id: 'your-refinement-driver',
-    available: () => true,
-    async run(operation) {
-      // Generate candidates and attach exact Hitch eval ids through
-      // operation.capabilities. Never write the sidecar directly.
-    },
-    async resume(operation) {
-      // Reattach through the persisted operation/eval ids.
-    },
-    async cancel() {
-      return 'stopped'
-    },
-  }
-  ctx.effect(() => ctx.refinements.registerDriver(driver))
-}
-```
-
-Provider and driver ids are selected explicitly. REAR never picks the first
-registered provider and never derives eval/run ids from paths.
-
-## Evidence and transport boundaries
-
-- Hitch is read only through exact eval/run references stored by the driver.
-- Every evidence path is confined to its real run directory; symlink escapes,
-  size mismatches, and SHA-256 mismatches fail before bytes reach the browser.
-- Normalized trajectories and provider-native evidence use separate endpoints;
-  native evidence is cursor-paged and byte-bounded.
-- Hitch filesystem watches publish payload-free invalidations. The Client holds
-  an event-driven change request and performs an authoritative resync; React
-  does not poll files.
-- Uninstall disposes the command, RPC channel, watchers, client slots, and
-  in-process operations through Cordis effects.
-
-## DSH rc.8 compatibility
-
-DSH `0.1.0-rc.8` supports external dual-face packages, conversation slots, and
-generic Connection RPC, so the plugin installs and the workbench operates on
-that release. Two public UI seams described by the full workbench spec are not
-yet exported by rc.8:
-
-- `ui-trajectory` does not export `TrajectorySurface` or the offline adapter;
-- command-row props do not yet expose the generic `openView(viewId)` callback.
-
-On rc.8, users open the always-visible Refine tab directly and canonical lanes
-show a compatibility notice while verified provider evidence remains
-available. DSH client bundles forbid cross-plugin runtime value imports, so a
-future compatible DSH release must promote the offline trajectory surface to a
-supported shared service before REAR can consume it without copying trajectory
-code.
-
-## Develop and verify
+## Development
 
 ```bash
 npm install
 npm run typecheck
 npm test
+npm run build
 npm run pack:check
 ```
 
-For repeatable UI testing, generate a mountable JSON-storage snapshot and
-matching Hitch evidence under `fixtures/dashboard-data`. The generated fixture
-is intentionally ignored by Git and its generated README records the exact
-demo Session lifecycle and volume/config paths:
+The dashboard fixture generator remains a deterministic UI/evidence fixture for tests; production discovery always starts from Gear's persisted registry and round files.
 
-```bash
-npm run fixture:dashboard
-```
-
-The fixture includes three benchmark suites across baseline, safe-tools, and
-quality-focused candidates. It exercises the portfolio heatmap, per-benchmark
-regression guardrails, quality/latency Pareto frontier, benchmark drill-down,
-and trajectory evidence states.
-
-The tests cover persistent lifecycle isolation and restart recovery, CAS
-mutations, Hitch ownership/path/checksum behavior, strict comparisons, Client
-request invalidation, a real Loader composition, client-bundle purity, and the
-install-safe package patch.
-
-The implementation contract is documented in
-[`docs/dsh-refinement-workbench-plugin-spec.md`](docs/dsh-refinement-workbench-plugin-spec.md).
+See [the read-only integration specification](docs/dsh-refinement-workbench-plugin-spec.md) for the ownership and validation contract.

@@ -2,8 +2,6 @@ import type { SessionId } from '@deepseek-ai/dsh-client-connection/client'
 import type {
   CanonicalTrajectoryDocument,
   HitchRunId,
-  RefinementCancelRequest,
-  RefinementCancelResult,
   RefinementComparisonDimension,
   RefinementEvaluationRequest,
   RefinementEvaluationResult,
@@ -27,7 +25,6 @@ import type {
 export interface RefinementRemoteClient {
   list(request: RefinementListRequest, signal?: AbortSignal): Promise<RefinementListResult>
   get(request: RefinementGetRequest, signal?: AbortSignal): Promise<RefinementGetResult>
-  cancel(request: RefinementCancelRequest, signal?: AbortSignal): Promise<RefinementCancelResult>
   evaluation(request: RefinementEvaluationRequest, signal?: AbortSignal): Promise<RefinementEvaluationResult>
   trajectory(request: RefinementTrajectoryRequest, signal?: AbortSignal): Promise<RefinementTrajectoryResult>
   providerEvidence(request: RefinementProviderEvidenceRequest, signal?: AbortSignal): Promise<RefinementProviderEvidenceResult>
@@ -109,9 +106,9 @@ function evidenceAvailable(availability: string): boolean {
   return availability === 'available' || availability === 'provider-only'
 }
 
-/** Per-Session object layer for reads, invalidation, cancellation, and lane selection. */
+/** Per-Session object layer for reads, invalidation, and lane selection. */
 export class RefinementController {
-  /** Observable state shared by the Refine view and command cards. */
+  /** Observable state rendered by the Refine view. */
   readonly store: SnapshotStore<RefinementViewState> = createStore(INITIAL_STATE)
   private readonly requests = new Map<string, { controller: AbortController; generation: number }>()
   private nextGeneration = 0
@@ -192,7 +189,7 @@ export class RefinementController {
 
   /**
    * Select and load one refinement, retaining the selection across view switches.
-   * @param refinementId - sidecar to select.
+   * @param refinementId - Gear evolution projection to select.
    */
   async selectRefinement(refinementId: RefinementId): Promise<void> {
     const current = this.store.getSnapshot()
@@ -347,26 +344,6 @@ export class RefinementController {
     if (state.providerEvidence !== null) this.store.set({ ...state, providerEvidence: null })
   }
 
-  /** Cancel using the latest record version and then resynchronize. */
-  async cancel(): Promise<void> {
-    const detail = this.store.getSnapshot().detail
-    if (detail === null) return
-    const request = this.begin('cancel')
-    try {
-      const result = await this.remote.cancel({
-        sessionId: this.sessionId,
-        refinementId: detail.id,
-        ifVersion: detail.version,
-      }, request.signal)
-      if (!this.current('cancel', request.generation)) return
-      if (!result.ok) throw new Error(`${result.error.message} (${result.error.code})`)
-      this.store.set({ ...this.store.getSnapshot(), detail: result.value.record, error: null })
-      await this.resync()
-    } catch (error) {
-      if (!request.signal.aborted) this.store.set({ ...this.store.getSnapshot(), error: failure(error) })
-    }
-  }
-
   /** Move one level upward without changing the current DSH Session. */
   back(): void {
     const state = this.store.getSnapshot()
@@ -379,11 +356,9 @@ export class RefinementController {
 
   /**
    * Coalesce a matching Host invalidation into one authoritative refresh microtask.
-   * @param refinementId - invalidated sidecar.
+   * @param refinementId - invalidated Gear evolution projection.
    */
   invalidate(refinementId: RefinementId): void {
-    const state = this.store.getSnapshot()
-    if (state.detail?.id !== refinementId && !state.records.some(record => record.id === refinementId)) return
     if (this.invalidationQueued || this.disposed) return
     this.invalidationQueued = true
     queueMicrotask(() => {

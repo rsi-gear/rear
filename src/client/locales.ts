@@ -1,7 +1,7 @@
 /** Refinement workbench copy keys. */
 export type RefinementKey =
   | 'view.refinement' | 'empty.title' | 'empty.body' | 'loading' | 'unknown'
-  | 'overview.title' | 'evaluation.title' | 'comparison.title' | 'back' | 'cancel'
+  | 'overview.title' | 'evaluation.title' | 'comparison.title' | 'back'
   | 'status' | 'objective' | 'iterations' | 'open' | 'strict' | 'exploratory'
   | 'task' | 'baseline' | 'candidate' | 'delta' | 'state' | 'compare'
   | 'attempts' | 'evidence.raw' | 'evidence.hide' | 'evidence.canonical' | 'unpaired'
@@ -38,16 +38,15 @@ export type RefinementKey =
   | 'status.failed' | 'status.timedOut' | 'status.cancelled' | 'status.corrupt'
   | 'status.pending' | 'status.regressed' | 'status.invalid' | 'status.improved'
   | 'status.unchanged' | 'status.valid' | 'status.missing'
-  | 'command.open' | 'command.running' | 'command.failed'
 
 /** English refinement workbench dictionary. */
 export const en: Record<RefinementKey, string> = {
   'view.refinement': 'Refine',
-  'empty.title': 'No refinements yet',
-  'empty.body': 'Run /refine [objective] in Chat to iterate and evaluate a harness.',
+  'empty.title': 'No Gear evolutions yet',
+  'empty.body': 'No persisted experiments were found under the configured Gear state root.',
   loading: 'Loading…', unknown: 'Unknown',
   'overview.title': 'Refinement overview', 'evaluation.title': 'Iteration evaluation',
-  'comparison.title': 'Task trajectory comparison', back: 'Back', cancel: 'Cancel',
+  'comparison.title': 'Task trajectory comparison', back: 'Back',
   status: 'Status', objective: 'Objective', iterations: 'Iterations', open: 'Open',
   strict: 'Strict comparison', exploratory: 'Exploratory comparison', task: 'Task',
   baseline: 'Baseline', candidate: 'Candidate', delta: 'Delta', state: 'State',
@@ -105,18 +104,16 @@ export const en: Record<RefinementKey, string> = {
   'status.pending': 'Pending', 'status.regressed': 'Regressed', 'status.invalid': 'Invalid',
   'status.improved': 'Improved', 'status.unchanged': 'Unchanged', 'status.valid': 'Valid',
   'status.missing': 'Missing',
-  'command.open': 'Open Refine', 'command.running': 'Starting refinement…',
-  'command.failed': 'Refinement was not admitted',
 }
 
 /** Simplified Chinese refinement workbench dictionary. */
 export const zh: Record<RefinementKey, string> = {
   'view.refinement': '优化',
-  'empty.title': '暂无迭代',
-  'empty.body': '在 Chat 中运行 /refine [目标]，开始迭代并测评 harness。',
+  'empty.title': '暂无 Gear 实验',
+  'empty.body': '配置的 Gear 状态目录中暂无已落盘实验。',
   loading: '加载中…', unknown: '未知',
   'overview.title': '迭代总览', 'evaluation.title': '迭代测评',
-  'comparison.title': '任务轨迹对比', back: '返回', cancel: '取消',
+  'comparison.title': '任务轨迹对比', back: '返回',
   status: '状态', objective: '目标', iterations: '迭代', open: '打开',
   strict: '严格对比', exploratory: '探索性对比', task: '任务',
   baseline: '基线', candidate: '候选', delta: '差值', state: '状态',
@@ -174,13 +171,11 @@ export const zh: Record<RefinementKey, string> = {
   'status.pending': '等待中', 'status.regressed': '回退', 'status.invalid': '无效',
   'status.improved': '提升', 'status.unchanged': '持平', 'status.valid': '有效',
   'status.missing': '缺失',
-  'command.open': '打开 Refine', 'command.running': '正在创建迭代…',
-  'command.failed': '迭代未准入',
 }
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
-    /** Refinement workbench and rich command-card copy. */
+    /** Read-only Gear experiment workbench copy. */
     refinement: RefinementKey
   }
 }

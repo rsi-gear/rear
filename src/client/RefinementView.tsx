@@ -1,9 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
-import type {
-  CommandRowProps,
-  ConvViewProps,
-} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { ConvViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {
   RefinementId,
   RefinementProviderEvidencePage,
@@ -12,7 +9,6 @@ import type {
 import type { RefinementController } from './controller.ts'
 import { en, type RefinementKey } from './locales.ts'
 import { OfflineTrajectorySurface } from './OfflineTrajectorySurface.tsx'
-import type { RefinementLinksSnapshot } from './refinement-links.ts'
 import {
   BENCHMARK_REGRESSION_GUARDRAIL,
   benchmarkKey,
@@ -27,7 +23,7 @@ const css = {
   error: 'rear-refinement-error', meta: 'rear-refinement-meta', table: 'rear-refinement-table',
   attempt: 'rear-refinement-attempt', lanes: 'rear-refinement-lanes', lane: 'rear-refinement-lane',
   laneHeader: 'rear-refinement-lane-header', laneBody: 'rear-refinement-lane-body',
-  raw: 'rear-refinement-raw', command: 'rear-refinement-command', commandText: 'rear-refinement-command-text',
+  raw: 'rear-refinement-raw',
   topbar: 'rear-refinement-topbar', brand: 'rear-refinement-brand', brandMark: 'rear-refinement-brand-mark',
   status: 'rear-refinement-status', hero: 'rear-refinement-hero', heroCopy: 'rear-refinement-hero-copy',
   kicker: 'rear-refinement-kicker', heroTitle: 'rear-refinement-hero-title', heroScore: 'rear-refinement-hero-score',
@@ -58,9 +54,7 @@ const css = {
   tradeoffLegend: 'rear-refinement-tradeoff-legend', benchmarkTabs: 'rear-refinement-benchmark-tabs',
 } as const
 
-const EMPTY_LINKS: RefinementLinksSnapshot = new Map()
-
-/** Controller and layout actions shared by the view and command card. */
+/** Controller and layout actions used by the read-only Gear experiment view. */
 export interface RefinementInjected {
   hooks: { refinement: RefinementController }
   ensure: () => Promise<void>
@@ -70,16 +64,12 @@ export interface RefinementInjected {
   openTask: RefinementController['openTask']
   selectRuns: RefinementController['selectRuns']
   back: RefinementController['back']
-  cancel: RefinementController['cancel']
   loadProviderEvidence: RefinementController['loadProviderEvidence']
   closeProviderEvidence: RefinementController['closeProviderEvidence']
   closeDetails: () => void
 }
 
 type ViewProps = ConvViewProps & InjectFace<RefinementInjected> & PropsLocale<'refinement'>
-type CardProps = CommandRowProps & InjectFace<RefinementInjected> & PropsLocale<'refinement'> & {
-  readonly openView?: (viewId: string) => void
-}
 
 const ENGLISH_T = (key: RefinementKey): string => en[key]
 
@@ -336,7 +326,7 @@ function TrajectoryLane({ run, document, loadRaw, closeRaw, raw }: {
 
 /** Always-present Refine conversation view with overview, evaluation, and comparison levels. */
 export function RefinementView({
-  useRefinement, ensure, selectRefinement, selectIteration, setComparisonDimension, openTask, selectRuns, back, cancel,
+  useRefinement, ensure, selectRefinement, selectIteration, setComparisonDimension, openTask, selectRuns, back,
   loadProviderEvidence, closeProviderEvidence, closeDetails, t,
 }: ViewProps) {
   const state = useRefinement(value => value)
@@ -445,9 +435,6 @@ export function RefinementView({
                 disabled={!canOpen}
                 onClick={() => { if (state.selectedIterationId !== null) void selectIteration(state.selectedIterationId) }}
               >{t('overview.openBreakdown')} <span aria-hidden="true">→</span></button>
-              {!['completed', 'failed', 'cancelled'].includes(detail.status) && (
-                <button type="button" className={css.secondary} onClick={() => { void cancel() }}>{t('cancel')}</button>
-              )}
             </div>
           </div>
           <div className={css.heroScore}>
@@ -769,34 +756,5 @@ export function RefinementView({
         })}
       </div>
     </main>
-  )
-}
-
-/** Rich `/refine` command lifecycle linked to the authoritative sidecar event. */
-export function RefineCommandCard(props: CardProps) {
-  const { node, openView, useSession, useRefinement, ensure, selectRefinement, t } = props
-  const links = useSession(snapshot => snapshot.views.get('refinement-links') ?? EMPTY_LINKS)
-  const refinementId = node.outcome?.sourceEventSeq === undefined
-    ? undefined
-    : links.get(node.outcome.sourceEventSeq)
-  const record = useRefinement(state => refinementId === undefined
-    ? undefined
-    : state.records.find(candidate => candidate.id === refinementId) ?? (state.detail?.id === refinementId ? state.detail : undefined))
-  useEffect(() => { void ensure() }, [ensure])
-  const status = node.outcome === null
-    ? t('command.running')
-    : node.outcome.kind === 'error'
-      ? t('command.failed')
-      : record === undefined ? node.outcome.text ?? t('unknown') : statusLabel(record.status, t)
-  return (
-    <div className={css.command} data-refine-command="">
-      <strong>/refine</strong>
-      <span className={css.commandText}>{record?.objective ?? status}</span>
-      {refinementId !== undefined && openView !== undefined && (
-        <button type="button" onClick={() => {
-          void selectRefinement(refinementId).then(() => { openView('refinement') })
-        }}>{t('command.open')}</button>
-      )}
-    </div>
   )
 }

@@ -7,7 +7,6 @@ import {
 import type { FSWatcher } from 'node:fs'
 import { basename, isAbsolute, join, relative, resolve } from 'node:path'
 import { TextDecoder } from 'node:util'
-import type { Context } from '@deepseek-ai/cordis'
 import s from '@deepseek-ai/schemastery'
 import type { SessionHeader } from '@deepseek-ai/dsh-session/types'
 import type {
@@ -481,6 +480,9 @@ export class HitchRefinementEvidenceProvider implements RefinementEvidenceProvid
     this.watchDebounceMs = config.watchDebounceMs
   }
 
+  /** Canonical real root used by trusted Host adapters to validate eval ownership. */
+  get rootPath(): string { return this.root }
+
   /** @returns whether the configured root is a real directory. */
   available(): boolean {
     try {
@@ -766,14 +768,4 @@ export class HitchRefinementEvidenceProvider implements RefinementEvidenceProvid
       throw new RefinementProviderError('trajectory-corrupt', 'provider evidence cursor is invalid')
     }
   }
-}
-
-/**
- * Register the configured Hitch provider as a reversible effect.
- * @param ctx - host plugin context.
- * @param config - provider configuration.
- */
-export function apply(ctx: Context, config: Config): void {
-  const provider = new HitchRefinementEvidenceProvider(config)
-  ctx.effect(() => ctx.refinements.registerEvidenceProvider(provider), `refinement-hitch: ${provider.id}`)
 }
