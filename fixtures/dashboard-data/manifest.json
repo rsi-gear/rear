@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "description": "Deterministic, mountable REAR dashboard fixture",
+  "session": {
+    "id": "rear-dashboard-demo",
+    "createdAt": 1787216400000,
+    "cwd": "/workspace/rear-dashboard-demo"
+  },
+  "primaryRefinementId": "refinement-dashboard-primary",
+  "mounts": {
+    "storage": {
+      "source": "storage",
+      "readOnly": false,
+      "config": "@deepseek-ai/dsh-storage-json.root"
+    },
+    "hitch": {
+      "source": "hitch",
+      "readOnly": true,
+      "config": "dsh-plugin-rear.hitch.root"
+    }
+  }
+}

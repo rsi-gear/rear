@@ -1,0 +1,17 @@
+{
+  "schema_version": "1",
+  "tasks": [
+    {
+      "id": "json-schema-repair"
+    },
+    {
+      "id": "unicode-paths"
+    },
+    {
+      "id": "retry-backoff"
+    },
+    {
+      "id": "tool-ordering"
+    }
+  ]
+}

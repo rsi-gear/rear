@@ -1,0 +1,13 @@
+{
+  "schema_version": "2",
+  "run_id": "run_00000000000000000000000000000011",
+  "files": [
+    {
+      "role": "provider_events",
+      "path": "trajectory/provider/events.jsonl",
+      "media_type": "application/x-ndjson",
+      "sha256": "sha256:32c6dfb2b6c1d8c3c06d0715a3fa97211c0e73382478dcda80f72dc0de611b4f",
+      "bytes": 720
+    }
+  ]
+}

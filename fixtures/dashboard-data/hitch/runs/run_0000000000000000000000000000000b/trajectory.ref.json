@@ -1,0 +1,20 @@
+{
+  "schema_version": "2",
+  "run_id": "run_0000000000000000000000000000000b",
+  "files": [
+    {
+      "role": "canonical_session",
+      "path": "trajectory/canonical/session.jsonl",
+      "media_type": "application/x-ndjson",
+      "sha256": "sha256:a88e3d7ca22abe793ca856e3aa5fc70abb23c56424e6dcb14702ccaf980cf663",
+      "bytes": 1158
+    },
+    {
+      "role": "provider_events",
+      "path": "trajectory/provider/events.jsonl",
+      "media_type": "application/x-ndjson",
+      "sha256": "sha256:dd40add97f9df48e992811e9b3bbded419c267a69a67c7a4ed1a320f1779d167",
+      "bytes": 8961
+    }
+  ]
+}

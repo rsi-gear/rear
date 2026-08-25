@@ -38,6 +38,7 @@
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('lib',{recursive:true,force:true})\"",
     "build": "npm run clean && tsc -p tsconfig.build.json && tsdown --config tsdown.config.ts",
+    "fixture:dashboard": "node scripts/generate-dashboard-fixture.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run tests/plugin",

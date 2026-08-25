@@ -51,6 +51,8 @@ export interface RefinementViewState {
   readonly records: readonly RefinementSummary[]
   readonly detail: RefinementRecordV1 | null
   readonly evaluation: RefinementEvaluationView | null
+  /** Evaluation projections retained by iteration so the overview can rank every tested version. */
+  readonly evaluationHistory: Readonly<Record<string, RefinementEvaluationView>>
   readonly trajectories: Readonly<Record<string, CanonicalTrajectoryDocument | null>>
   readonly providerEvidence: RefinementProviderEvidencePage | null
   readonly error: string | null
@@ -69,6 +71,7 @@ const INITIAL_STATE: RefinementViewState = {
   records: [],
   detail: null,
   evaluation: null,
+  evaluationHistory: {},
   trajectories: {},
   providerEvidence: null,
   error: null,
@@ -172,6 +175,7 @@ export class RefinementController {
         ...(selected === null ? {
           detail: null,
           evaluation: null,
+          evaluationHistory: {},
           selectedIterationId: null,
           selectedTaskKey: null,
           selectedRunIds: [],
@@ -195,6 +199,7 @@ export class RefinementController {
     if (current.selectedRefinementId !== refinementId) {
       this.abort('detail')
       this.abort('evaluation')
+      this.abortPrefix('evaluation-history:')
       this.store.set({
         ...current,
         selectedRefinementId: refinementId,
@@ -205,6 +210,7 @@ export class RefinementController {
         attemptPairing: null,
         detail: null,
         evaluation: null,
+        evaluationHistory: {},
         trajectories: {},
         providerEvidence: null,
         error: null,
@@ -315,6 +321,7 @@ export class RefinementController {
   async loadProviderEvidence(runId: HitchRunId, fileOrdinal: number, cursor: string | null): Promise<void> {
     const detail = this.store.getSnapshot().detail
     if (detail === null) return
+    this.store.set({ ...this.store.getSnapshot(), providerEvidence: null })
     const request = this.begin('provider-evidence')
     try {
       const result = await this.remote.providerEvidence({
@@ -330,6 +337,14 @@ export class RefinementController {
     } catch (error) {
       if (!request.signal.aborted) this.store.set({ ...this.store.getSnapshot(), error: failure(error) })
     }
+  }
+
+  /** Close the visible provider-native evidence page and cancel an in-flight replacement. */
+  closeProviderEvidence(runId?: HitchRunId): void {
+    const state = this.store.getSnapshot()
+    if (runId !== undefined && state.providerEvidence?.runId !== runId) return
+    this.abort('provider-evidence')
+    if (state.providerEvidence !== null) this.store.set({ ...state, providerEvidence: null })
   }
 
   /** Cancel using the latest record version and then resynchronize. */
@@ -423,14 +438,19 @@ export class RefinementController {
         && result.value.iterations.some(iteration => iteration.id === state.selectedIterationId)
         ? state.selectedIterationId
         : result.value.activeIterationId ?? result.value.iterations.at(-1)?.id ?? null
+      this.abortPrefix('evaluation-history:')
       this.store.set({
         ...state,
         status: 'ready',
         detail: result.value,
         selectedIterationId: iterationId,
+        evaluationHistory: {},
         error: null,
       })
-      if (iterationId !== null) await this.refreshEvaluation()
+      if (iterationId !== null) {
+        await this.refreshEvaluation()
+        void this.refreshEvaluationHistory(iterationId)
+      }
     } catch (error) {
       if (!request.signal.aborted) this.store.set({ ...this.store.getSnapshot(), status: 'error', error: failure(error) })
     }
@@ -454,10 +474,45 @@ export class RefinementController {
       const latest = this.store.getSnapshot()
       if (latest.detail?.id !== detail.id || latest.selectedIterationId !== iterationId) return
       if (!result.ok) throw new Error(`${result.error.message} (${result.error.code})`)
-      this.store.set({ ...latest, evaluation: result.value, error: null })
+      this.store.set({
+        ...latest,
+        evaluation: result.value,
+        evaluationHistory: { ...latest.evaluationHistory, [iterationId]: result.value },
+        error: null,
+      })
     } catch (error) {
       if (!request.signal.aborted) this.store.set({ ...this.store.getSnapshot(), error: failure(error) })
     }
+  }
+
+  /** Load non-selected iterations in the background for the all-version overview leaderboard. */
+  private async refreshEvaluationHistory(selectedIterationId: RefinementIterationId): Promise<void> {
+    const state = this.store.getSnapshot()
+    const detail = state.detail
+    if (detail === null) return
+    const iterations = detail.iterations.filter(iteration => iteration.id !== selectedIterationId && iteration.evaluationRefs.length > 0)
+    await Promise.all(iterations.map(async (iteration) => {
+      const key = `evaluation-history:${iteration.id}`
+      const request = this.begin(key)
+      try {
+        const result = await this.remote.evaluation({
+          sessionId: this.sessionId,
+          refinementId: detail.id,
+          iterationId: iteration.id,
+          dimension: state.comparisonDimension,
+          referenceRunId: null,
+        }, request.signal)
+        if (!this.current(key, request.generation) || !result.ok) return
+        const latest = this.store.getSnapshot()
+        if (latest.detail?.id !== detail.id) return
+        this.store.set({
+          ...latest,
+          evaluationHistory: { ...latest.evaluationHistory, [iteration.id]: result.value },
+        })
+      } catch {
+        // Historical evidence is additive; one unavailable iteration must not fail the active view.
+      }
+    }))
   }
 
   private async loadTrajectory(runId: HitchRunId): Promise<void> {
@@ -499,6 +554,12 @@ export class RefinementController {
   private abort(key: string): void {
     this.requests.get(key)?.controller.abort(`superseded ${key} request`)
     this.requests.delete(key)
+  }
+
+  private abortPrefix(prefix: string): void {
+    for (const key of [...this.requests.keys()]) {
+      if (key.startsWith(prefix)) this.abort(key)
+    }
   }
 
   private current(key: string, generation: number): boolean {

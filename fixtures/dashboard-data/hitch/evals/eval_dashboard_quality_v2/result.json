@@ -1,0 +1,65 @@
+{
+  "schema_version": "1",
+  "eval_id": "eval_dashboard_quality_v2",
+  "benchmark_id": "rear-dashboard-benchmark",
+  "benchmark_revision": "2026.08",
+  "status": "succeeded",
+  "trials": [
+    {
+      "trial_id": "eval_dashboard_quality_v2-trial-json-schema-repair-1",
+      "run_id": "run_0000000000000000000000000000000b",
+      "task_id": "json-schema-repair",
+      "attempt": 1,
+      "observation_status": "valid",
+      "reward": 0.85
+    },
+    {
+      "trial_id": "eval_dashboard_quality_v2-trial-json-schema-repair-2",
+      "run_id": "run_0000000000000000000000000000000c",
+      "task_id": "json-schema-repair",
+      "attempt": 2,
+      "observation_status": "valid",
+      "reward": 0.95
+    },
+    {
+      "trial_id": "eval_dashboard_quality_v2-trial-unicode-paths-1",
+      "run_id": "run_0000000000000000000000000000000d",
+      "task_id": "unicode-paths",
+      "attempt": 1,
+      "observation_status": "valid",
+      "reward": 0.7
+    },
+    {
+      "trial_id": "eval_dashboard_quality_v2-trial-retry-backoff-1",
+      "run_id": "run_0000000000000000000000000000000e",
+      "task_id": "retry-backoff",
+      "attempt": 1,
+      "observation_status": "valid",
+      "reward": 0.4
+    },
+    {
+      "trial_id": "eval_dashboard_quality_v2-trial-retry-backoff-3",
+      "run_id": "run_0000000000000000000000000000000f",
+      "task_id": "retry-backoff",
+      "attempt": 3,
+      "observation_status": "invalid",
+      "invalid_reason": "infrastructure-timeout"
+    },
+    {
+      "trial_id": "eval_dashboard_quality_v2-trial-tool-ordering-1",
+      "run_id": "run_00000000000000000000000000000010",
+      "task_id": "tool-ordering",
+      "attempt": 1,
+      "observation_status": "valid",
+      "reward": 0.9
+    },
+    {
+      "trial_id": "eval_dashboard_quality_v2-trial-tool-ordering-2",
+      "run_id": "run_00000000000000000000000000000011",
+      "task_id": "tool-ordering",
+      "attempt": 2,
+      "observation_status": "invalid",
+      "invalid_reason": "tool-result-missing"
+    }
+  ]
+}

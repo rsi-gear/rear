@@ -1,0 +1,4 @@
+{"type":"response.delta","run_id":"run_00000000000000000000000000000001","index":0,"task":"json-schema-repair","text":"dummy provider evidence 1/4 — 可用于测试分页和 UTF-8"}
+{"type":"response.delta","run_id":"run_00000000000000000000000000000001","index":1,"task":"json-schema-repair","text":"dummy provider evidence 2/4 — 可用于测试分页和 UTF-8"}
+{"type":"response.delta","run_id":"run_00000000000000000000000000000001","index":2,"task":"json-schema-repair","text":"dummy provider evidence 3/4 — 可用于测试分页和 UTF-8"}
+{"type":"response.completed","run_id":"run_00000000000000000000000000000001","index":3,"task":"json-schema-repair","text":"dummy provider evidence 4/4 — 可用于测试分页和 UTF-8"}

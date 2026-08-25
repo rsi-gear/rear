@@ -33,7 +33,6 @@ describe('published DSH bundle', () => {
     expect(bundle).toContain('id: "dsh-plugin-rear"')
     const requires = [...bundle.matchAll(/require\("([^"]+)"\)/gu)].map(match => match[1]).sort()
     expect([...new Set(requires)]).toEqual([
-      '@deepseek-ai/dsh-client-ui-trajectory/client',
       'react',
       'react/jsx-runtime',
     ])

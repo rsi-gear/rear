@@ -117,6 +117,15 @@ npm test
 npm run pack:check
 ```
 
+For repeatable UI testing, [`fixtures/dashboard-data`](fixtures/dashboard-data)
+contains a mountable JSON-storage snapshot and matching Hitch evidence. Its
+README records the exact demo Session lifecycle and volume/config paths. Reset
+the snapshot deterministically with:
+
+```bash
+npm run fixture:dashboard
+```
+
 The tests cover persistent lifecycle isolation and restart recovery, CAS
 mutations, Hitch ownership/path/checksum behavior, strict comparisons, Client
 request invalidation, a real Loader composition, client-bundle purity, and the

@@ -1,0 +1,4 @@
+{"type":"response.delta","run_id":"run_00000000000000000000000000000010","index":0,"task":"tool-ordering","text":"dummy provider evidence 1/4 — 可用于测试分页和 UTF-8"}
+{"type":"response.delta","run_id":"run_00000000000000000000000000000010","index":1,"task":"tool-ordering","text":"dummy provider evidence 2/4 — 可用于测试分页和 UTF-8"}
+{"type":"response.delta","run_id":"run_00000000000000000000000000000010","index":2,"task":"tool-ordering","text":"dummy provider evidence 3/4 — 可用于测试分页和 UTF-8"}
+{"type":"response.completed","run_id":"run_00000000000000000000000000000010","index":3,"task":"tool-ordering","text":"dummy provider evidence 4/4 — 可用于测试分页和 UTF-8"}

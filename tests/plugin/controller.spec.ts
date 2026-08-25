@@ -1,9 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
 import type {
+  HitchEvalId,
+  HitchRunId,
+  RefinementCandidateId,
   RefinementGetResult,
   RefinementGetRequest,
   RefinementId,
+  RefinementIterationId,
   RefinementRecordV1,
   RefinementVersion,
 } from '../../src/types.ts'
@@ -73,6 +77,31 @@ function deferred<T>() {
 }
 
 describe('RefinementController', () => {
+  it('closes provider evidence only for its owning run', async () => {
+    const first = record('refinement-a')
+    const runId = 'run-a' as HitchRunId
+    const client = remote([first])
+    client.providerEvidence = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        runId,
+        file: { ordinal: 0, role: 'provider', mediaType: 'application/x-ndjson', bytes: 2, sha256: '00' },
+        encoding: 'utf8' as const,
+        content: '{}',
+        nextCursor: null,
+      },
+    }))
+    const controller = new RefinementController(client, SID)
+    await controller.ensure()
+    await controller.loadProviderEvidence(runId, 0, null)
+    expect(controller.getSnapshot().providerEvidence?.runId).toBe(runId)
+    controller.closeProviderEvidence('run-b' as HitchRunId)
+    expect(controller.getSnapshot().providerEvidence?.runId).toBe(runId)
+    controller.closeProviderEvidence(runId)
+    expect(controller.getSnapshot().providerEvidence).toBeNull()
+    controller.dispose()
+  })
+
   it('cold-loads once and coalesces duplicate matching invalidations', async () => {
     const first = record('refinement-a')
     const client = remote([first])
@@ -145,6 +174,67 @@ describe('RefinementController', () => {
     expect(controller.getSnapshot().detail?.id).toBe(first.id)
     // oxlint-disable-next-line typescript/unbound-method -- Vitest mock inspection does not invoke the method.
     expect(client.list).toHaveBeenCalledTimes(2)
+    controller.dispose()
+  })
+
+  it('retains evaluation projections from every tested iteration for overview ranking', async () => {
+    const candidateId = 'candidate-a' as RefinementCandidateId
+    const firstIterationId = 'iteration-1' as RefinementIterationId
+    const secondIterationId = 'iteration-2' as RefinementIterationId
+    const evalRef = (ordinal: number) => ({
+      providerId: 'hitch',
+      evalId: `eval-${ordinal}` as HitchEvalId,
+      candidateId,
+      requestedModelId: 'model-a',
+      benchmarkId: 'benchmark-a',
+      benchmarkRevision: 'revision-a',
+    })
+    const value: RefinementRecordV1 = {
+      ...record('refinement-history'),
+      baselineCandidateId: candidateId,
+      activeIterationId: secondIterationId,
+      candidates: [{
+        id: candidateId,
+        role: 'baseline',
+        parentCandidateId: null,
+        requestedHarnessRef: 'harness-a',
+        revisionIdentity: 'revision-a',
+        label: 'Baseline',
+        createdAt: 1,
+      }],
+      iterations: [firstIterationId, secondIterationId].map((id, index) => ({
+        id,
+        ordinal: index + 1,
+        status: 'settled',
+        candidateIds: [candidateId],
+        evaluationRefs: [evalRef(index + 1)],
+        createdAt: index + 1,
+        completedAt: index + 2,
+      })),
+    }
+    const client = remote([value])
+    client.evaluation = vi.fn(async request => ({
+      ok: true as const,
+      value: {
+        evidenceVersion: String(request.iterationId),
+        evaluations: [],
+        comparison: {
+          strict: true,
+          dimension: request.dimension,
+          referenceRunId: null,
+          exclusions: [],
+          tasks: [],
+        },
+      },
+    }))
+    const controller = new RefinementController(client, SID)
+    await controller.ensure()
+    await vi.waitFor(() => {
+      expect(Object.keys(controller.getSnapshot().evaluationHistory).sort()).toEqual([
+        firstIterationId,
+        secondIterationId,
+      ])
+    })
     controller.dispose()
   })
 })

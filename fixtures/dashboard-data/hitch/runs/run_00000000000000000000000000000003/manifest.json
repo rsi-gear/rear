@@ -1,0 +1,42 @@
+{
+  "schema_version": "1",
+  "run_id": "run_00000000000000000000000000000003",
+  "context": {
+    "kind": "benchmark_task",
+    "benchmark_id": "rear-dashboard-benchmark",
+    "benchmark_revision": "2026.08",
+    "task_id": "unicode-paths",
+    "task_digest": "fixture-digest:unicode-paths",
+    "verifier_identity": "rear-fixture-verifier-v1"
+  },
+  "parent": {
+    "kind": "eval",
+    "eval_id": "eval_dashboard_baseline",
+    "trial_id": "eval_dashboard_baseline-trial-unicode-paths-1",
+    "attempt": 1
+  },
+  "status": "succeeded",
+  "harness": {
+    "requested_ref": "rear-agent@1.4.0",
+    "harness_id": "rear-agent",
+    "revision_identity": "git:1111111111111111111111111111111111111111"
+  },
+  "model": {
+    "requested_id": "deepseek-v3.2",
+    "provider": "deepseek",
+    "effective_id": "deepseek-v3.2-snapshot-2026-08",
+    "identity_resolved": true
+  },
+  "protocol": {
+    "timeout_ms": 30000,
+    "max_steps": 32,
+    "sandbox": "workspace-write"
+  },
+  "observation": {
+    "status": "valid",
+    "reward": 0.8
+  },
+  "created_at": 1787385780000,
+  "completed_at": 1787385782500,
+  "trajectory_ref": "trajectory.ref.json"
+}

@@ -78,8 +78,8 @@ export function apply(ctx: Context): void {
       back: () => { controller.back() },
       cancel: () => controller.cancel(),
       loadProviderEvidence: (runId, fileOrdinal, cursor) => controller.loadProviderEvidence(runId, fileOrdinal, cursor),
+      closeProviderEvidence: runId => { controller.closeProviderEvidence(runId) },
       closeDetails: () => { ctx.layout.closeDetails() },
-      trajectoryT: ctx.locale.bind('trajectory'),
     }
   }
 
