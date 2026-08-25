@@ -4,6 +4,10 @@ Rear is a read-only DeepSeek Harness workbench for experiments produced by Gear 
 
 Gear is the only refinement control plane. It owns `/refine`, candidate generation, evaluation scheduling, promotion, and experiment state. Rear does not register `/refine`, inspect its command return value, persist a refinement sidecar, cancel experiments, or modify Gear state.
 
+## Compatibility
+
+The development and test baseline is DSH `0.1.1-rc.2`. Rear also recognizes the legacy `refinement/created` Session event written by pre-Gear Rear releases, so historical sessions containing that event remain readable. The current Gear-backed runtime never writes or consumes the event, and new refinement views do not depend on it.
+
 ## Data flow
 
 ```text
@@ -44,7 +48,7 @@ The bundled Loader row is dormant. Enable it and provide explicit state roots an
       watchDebounceMs: 200
 ```
 
-`gear.root` must be the same absolute directory configured as Gear's `evolutionState.stateRoot`. `hitch.root` must be the absolute Hitch run-centered state root. Both roots must already exist as real directories; symlinked roots and escaping evidence paths are rejected.
+`gear.root` must be the same absolute directory configured in Gear's top-level `stateRoot` field (not under `evolutionState`). `hitch.root` must be the absolute Hitch run-centered state root. Both roots must already exist as real directories; symlinked roots and escaping evidence paths are rejected.
 
 The plugin watches both roots and asks connected views to perform an authoritative rescan after changes. Gear evolutions are global persisted experiments; the active DSH Session scopes only the browser controller, not experiment ownership.
 

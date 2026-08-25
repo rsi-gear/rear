@@ -33,7 +33,7 @@ Gear registry.json
 | 事实或动作 | 所有者 | Rear 行为 |
 | --- | --- | --- |
 | `/refine` 命令与返回值 | Gear | 不注册、不调用、不解析 |
-| evolution、round、candidate、promotion | Gear | 从 `evolutionState.stateRoot` 只读投影 |
+| evolution、round、candidate、promotion | Gear | 从顶层 `stateRoot` 只读投影 |
 | eval 与 run 的成员关系 | Gear + Hitch | 双向严格校验，不一致即拒绝 |
 | benchmark、task、trial、attempt | Hitch | 读取权威值并与 Gear 证据核对 |
 | run manifest 与 `trajectory_ref` | Hitch | 按引用解析，不猜测文件名 |
@@ -42,7 +42,7 @@ Gear registry.json
 
 ## 3. Gear 发现契约
 
-配置项 `gear.root` 必须等于 Gear 的 `evolutionState.stateRoot`，且必须是已存在的绝对真实目录。
+配置项 `gear.root` 必须等于 Gear 的顶层 `stateRoot`（不在 `evolutionState` 下），且必须是已存在的绝对真实目录。
 
 Rear 读取：
 

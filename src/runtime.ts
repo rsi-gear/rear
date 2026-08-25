@@ -20,6 +20,7 @@ import s from '@deepseek-ai/schemastery'
 import type SessionStore from '@deepseek-ai/dsh-session'
 import type { SessionHeader } from '@deepseek-ai/dsh-session/types'
 import { z } from 'zod'
+import './legacy-session-compat.ts'
 import {
   HitchRefinementEvidenceProvider,
   type Config as HitchConfig,
@@ -71,7 +72,7 @@ declare module '@deepseek-ai/cordis' {
 /** Gear state source, Hitch evidence source, and response bounds. */
 export interface Config {
   readonly gear: {
-    /** Absolute Gear `evolutionState.stateRoot`. */
+    /** Absolute Gear top-level `stateRoot`. */
     readonly root: string
     /** Debounce for atomic Gear state-file notifications. */
     readonly watchDebounceMs: number
