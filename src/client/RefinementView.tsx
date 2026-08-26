@@ -491,9 +491,13 @@ export function RefinementView({
       ? []
       : combinationScores(state.selectedIterationId, evaluation)
     const portfolio = benchmarkPortfolio(currentScores, detail?.candidates ?? [], detail?.baselineCandidateId ?? null)
-    const activeBenchmarkKey = portfolio.benchmarks.some(benchmark => benchmark.key === selectedBenchmarkKey)
+    const evaluationBenchmarks = [...new Map((evaluation?.evaluations ?? []).map(item => {
+      const key = benchmarkKey(item.ref)
+      return [key, { key, id: item.ref.benchmarkId, revision: item.ref.benchmarkRevision }]
+    })).values()]
+    const activeBenchmarkKey = evaluationBenchmarks.some(benchmark => benchmark.key === selectedBenchmarkKey)
       ? selectedBenchmarkKey
-      : portfolio.benchmarks[0]?.key ?? null
+      : evaluationBenchmarks[0]?.key ?? null
     const activeEvaluations = evaluation?.evaluations.filter(item => benchmarkKey(item.ref) === activeBenchmarkKey) ?? []
     const activeScores = currentScores.filter(score => benchmarkKey(score) === activeBenchmarkKey)
     const allRuns = activeEvaluations.flatMap(item => item.runs)
@@ -507,6 +511,8 @@ export function RefinementView({
         harnessRef: candidate?.requestedHarnessRef ?? t('unknown'),
         revision: candidate?.revisionIdentity ?? null,
         score: activeScores.find(item => item.candidateId === candidateId) ?? null,
+        failed: activeEvaluations.some(item => item.ref.candidateId === candidateId
+          && item.ref.failedEvaluation !== undefined),
       }
     })
     const comparisonByTask = new Map(evaluation?.comparison.tasks.map(task => [task.taskKey, task]) ?? [])
@@ -547,6 +553,9 @@ export function RefinementView({
           </div>
         </header>
         {state.error !== null && <p className={css.error}>{state.error}</p>}
+        {selectedIteration?.failure !== undefined && (
+          <p className={css.error}>{selectedIteration.failure.code}: {selectedIteration.failure.message}</p>
+        )}
         {detail !== null && detail.iterations.length > 0 && (
           <nav className={css.iterationNav} aria-label={t('iterations')}>
             {detail.iterations.slice().reverse().map(iteration => (
@@ -576,7 +585,7 @@ export function RefinementView({
               />
             </section>
             <nav className={css.benchmarkTabs} aria-label={t('portfolio.selectedBenchmark')}>
-              {portfolio.benchmarks.map(item => (
+              {evaluationBenchmarks.map(item => (
                 <button
                   type="button"
                   data-selected={item.key === activeBenchmarkKey}
@@ -596,6 +605,7 @@ export function RefinementView({
                   <article className={css.direction} data-role={direction.role} key={direction.id}>
                     <div className={css.directionTop}>
                       <span className={css.pill}>{roleLabel(direction.role, t)}</span>
+                      {direction.failed && <span className={css.pill} data-tone="warning">{t('evaluation.failedEvidence')}</span>}
                       {direction.score?.key === bestCurrent?.key && <span className={css.pill} data-tone="best">{t('breakdown.best')}</span>}
                     </div>
                     <div>
@@ -703,6 +713,9 @@ export function RefinementView({
         </div>
       </header>
       {state.error !== null && <p className={css.error}>{state.error}</p>}
+      {selectedIteration?.failure !== undefined && (
+        <p className={css.error}>{selectedIteration.failure.code}: {selectedIteration.failure.message}</p>
+      )}
       <section className={css.runPicker}>
         <div className={css.sectionHeader}>
           <div><h3>{t('comparison.chooseRuns')}</h3><span className={css.muted}>{t('comparison.chooseHint')}</span></div>

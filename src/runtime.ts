@@ -87,7 +87,7 @@ const EVAL_ID = /^eval_[0-9a-f]{32}$/u
 const RUN_ID = /^run_[0-9a-f]{32}$/u
 const ACTIVE_ROUND = new Set([
   'queued', 'baseline-running', 'preparing-candidate', 'candidate-editing',
-  'building-candidate', 'candidate-seed-running', 'held-out-running', 'promoting',
+  'building-candidate', 'candidate-seed-running', 'held-out-running', 'selection-running', 'promoting',
 ])
 const SETTLED_ROUND = new Set(['accepted', 'rejected', 'rejected-for-substrate'])
 
@@ -107,6 +107,38 @@ const gearEvidenceSchema = z.object({
   actualCommit: z.string().min(1),
   revisionIdentity: z.string().min(1),
   trials: z.array(gearTrialSchema),
+}).passthrough()
+
+const gearFailedEvaluationTrialSchema = z.object({
+  taskName: z.string().min(1),
+  trialName: z.string().min(1),
+  runId: z.string().min(1),
+  attempt: z.number().int().positive(),
+  status: z.string().min(1),
+  invalidReason: z.string().min(1).optional(),
+}).passthrough()
+
+const gearFailedEvaluationSchema = z.object({
+  phase: z.string().min(1),
+  owner: z.object({
+    candidateId: z.string().min(1),
+    harnessRef: z.string().min(1),
+    role: z.enum(['baseline', 'candidate']),
+  }).passthrough(),
+  evidence: z.object({
+    evalId: z.string().min(1),
+    provider: z.string().min(1),
+    dataset: z.string().min(1),
+    requestedCommit: z.string().min(1),
+    actualCommit: z.string().min(1),
+    revisionIdentity: z.string().min(1),
+    runSetComplete: z.literal(true),
+    trials: z.array(gearFailedEvaluationTrialSchema),
+  }).passthrough(),
+  failure: z.object({
+    code: z.string().min(1),
+    message: z.string().min(1),
+  }).passthrough(),
 }).passthrough()
 
 const gearCandidateSchema = z.object({
@@ -155,6 +187,7 @@ const gearRoundSchema = z.object({
     heldOutBaseline: gearEvidenceSchema.optional(),
     heldOutCandidate: gearEvidenceSchema.optional(),
   }).passthrough().optional(),
+  failedEvaluations: z.array(gearFailedEvaluationSchema).optional(),
   failure: z.object({ phase: z.string(), message: z.string() }).optional(),
 }).passthrough()
 
@@ -170,6 +203,8 @@ const gearRegistrySchema = z.object({
 })
 
 type GearEvidence = z.infer<typeof gearEvidenceSchema>
+type GearFailedEvaluation = z.infer<typeof gearFailedEvaluationSchema>
+type GearEvaluationEvidence = GearEvidence | GearFailedEvaluation['evidence']
 type GearRound = z.infer<typeof gearRoundSchema>
 type GearRegistryEntry = z.infer<typeof gearRegistrySchema>['evolutions'][number]
 type GearTrial = z.infer<typeof gearTrialSchema>
@@ -528,7 +563,8 @@ export class RefinementRuntime extends Service {
           ))
         }
       }
-      if (ids.length === 0) {
+      const hasFailedBaseline = (round.failedEvaluations ?? []).some(failed => failed.owner.role === 'baseline')
+      if (ids.length === 0 && !hasFailedBaseline) {
         ids.push(addCandidate(
           `initial-${round.targetHarnessRef}`,
           'baseline',
@@ -550,7 +586,21 @@ export class RefinementRuntime extends Service {
           createdAt,
         ))
       }
-      const refs = this.roundEvaluationRefs(round, ids[0] ?? null)
+      for (const failed of round.failedEvaluations ?? []) {
+        ids.push(addCandidate(
+          failed.owner.candidateId,
+          failed.owner.role,
+          null,
+          failed.owner.harnessRef,
+          failed.evidence.revisionIdentity,
+          failed.owner.role === 'baseline'
+            ? `Baseline ${failed.owner.candidateId}`
+            : `Candidate ${failed.owner.candidateId}`,
+          createdAt,
+        ))
+      }
+      const fallbackBaselineId = ids.find(id => candidates.get(id)?.value.role === 'baseline') ?? ids[0] ?? null
+      const refs = this.roundEvaluationRefs(round, fallbackBaselineId)
       const status = roundStatus(round.status)
       const completedAt = SETTLED_ROUND.has(round.status) || round.status === 'failed'
         ? timestamp(round.updatedAt)
@@ -601,14 +651,26 @@ export class RefinementRuntime extends Service {
 
   private roundEvaluationRefs(round: GearRound, fallbackBaselineId: RefinementCandidateId | null): RefinementEvaluationRef[] {
     const refs: RefinementEvaluationRef[] = []
-    const seen = new Set<string>()
-    const add = (evidence: GearEvidence | undefined, owner: RefinementCandidateId | null, model: string): void => {
+    const seen = new Map<string, number>()
+    const add = (
+      evidence: GearEvaluationEvidence | undefined,
+      owner: RefinementCandidateId | null,
+      model: string,
+      failedEvaluation?: GearFailedEvaluation,
+    ): void => {
       if (evidence === undefined || owner === null) return
       const key = `${evidence.evalId}\u0000${owner}`
-      if (seen.has(key)) return
-      const ref = this.evaluationRef(evidence, owner, model)
+      const existing = seen.get(key)
+      if (existing !== undefined) {
+        if (failedEvaluation !== undefined) {
+          const failedRef = this.evaluationRef(evidence, owner, model, failedEvaluation)
+          if (failedRef !== null) refs[existing] = failedRef
+        }
+        return
+      }
+      const ref = this.evaluationRef(evidence, owner, model, failedEvaluation)
       if (ref === null) return
-      seen.add(key)
+      seen.set(key, refs.length)
       refs.push(ref)
     }
     for (const parent of round.parentBaselines ?? []) {
@@ -624,20 +686,33 @@ export class RefinementRuntime extends Service {
     add(round.evaluation?.seedCandidate, promoted === undefined ? null : candidateId(promoted), round.plan.seed.model)
     add(round.evaluation?.heldOutBaseline, fallbackBaselineId, round.plan.heldOut.model)
     add(round.evaluation?.heldOutCandidate, promoted === undefined ? null : candidateId(promoted), round.plan.heldOut.model)
+    for (const failed of round.failedEvaluations ?? []) {
+      const model = failed.phase.startsWith('seed-')
+        ? round.plan.seed.model
+        : round.plan.heldOut.model
+      add(failed.evidence, candidateId(failed.owner.candidateId), model, failed)
+    }
     return refs
   }
 
   /** Convert a Gear eval only after its exact run membership agrees with Hitch. */
   private evaluationRef(
-    evidence: GearEvidence,
+    evidence: GearEvaluationEvidence,
     owner: RefinementCandidateId,
     requestedModelId: string,
+    failedEvaluation?: GearFailedEvaluation,
   ): RefinementEvaluationRef | null {
     if (!EVAL_ID.test(evidence.evalId)) throw new TypeError(`Gear eval id is invalid: ${evidence.evalId}`)
     const gearTrials = evidence.trials.filter(trial => trial.runId !== undefined)
-    if (gearTrials.length === 0) return null
+    if (failedEvaluation !== undefined && failedEvaluation.evidence.runSetComplete !== true) {
+      throw new TypeError(`Gear failed eval run set is incomplete: ${evidence.evalId}`)
+    }
+    if (gearTrials.length === 0 && failedEvaluation === undefined) return null
     for (const trial of gearTrials) {
       if (trial.runId === undefined || !RUN_ID.test(trial.runId)) throw new TypeError(`Gear run id is invalid: ${String(trial.runId)}`)
+    }
+    if (new Set(gearTrials.map(trial => trial.runId)).size !== gearTrials.length) {
+      throw new TypeError(`Gear eval run ids are duplicated: ${evidence.evalId}`)
     }
     const identity = this.hitchEvalIdentity(evidence, gearTrials)
     return {
@@ -647,10 +722,17 @@ export class RefinementRuntime extends Service {
       requestedModelId,
       benchmarkId: identity.benchmarkId,
       benchmarkRevision: identity.benchmarkRevision,
+      ...(failedEvaluation === undefined ? {} : {
+        failedEvaluation: {
+          phase: failedEvaluation.phase,
+          code: failedEvaluation.failure.code,
+          message: failedEvaluation.failure.message,
+        },
+      }),
     }
   }
 
-  private hitchEvalIdentity(evidence: GearEvidence, gearTrials: readonly GearTrial[]): HitchEvalIdentity {
+  private hitchEvalIdentity(evidence: GearEvaluationEvidence, gearTrials: readonly GearTrial[]): HitchEvalIdentity {
     const path = join(this.provider.rootPath, 'evals', evidence.evalId, 'result.json')
     const value = regularJson(path, this.provider.rootPath, `Hitch eval ${evidence.evalId}`)
     if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new TypeError('Hitch eval result is not an object')
@@ -669,11 +751,17 @@ export class RefinementRuntime extends Service {
       if (typeof trial !== 'object' || trial === null || Array.isArray(trial)) {
         throw new TypeError(`Hitch eval ${evidence.evalId} trial ${index} is invalid`)
       }
-      return trial as Record<string, unknown>
+      const value = trial as Record<string, unknown>
+      if (typeof value['run_id'] !== 'string' || !RUN_ID.test(value['run_id'])) {
+        throw new TypeError(`Hitch eval ${evidence.evalId} trial ${index} run id is invalid`)
+      }
+      return value
     })
     const gearRunIds = new Set(gearTrials.map(trial => trial.runId))
     const hitchRunIds = new Set(trials.map(trial => trial['run_id']))
-    if (gearRunIds.size !== hitchRunIds.size || [...gearRunIds].some(runId => !hitchRunIds.has(runId))) {
+    if (hitchRunIds.size !== trials.length
+      || gearRunIds.size !== hitchRunIds.size
+      || [...gearRunIds].some(runId => !hitchRunIds.has(runId))) {
       throw new TypeError(`Gear/Hitch run membership mismatch for eval ${evidence.evalId}`)
     }
     for (const gearTrial of gearTrials) {

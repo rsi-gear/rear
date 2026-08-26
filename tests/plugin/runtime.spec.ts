@@ -17,6 +17,10 @@ interface Harness {
   readonly candidateRunId: HitchRunId
 }
 
+interface FailedHarness extends Harness {
+  readonly invalidRunId: HitchRunId
+}
+
 const harnesses: Harness[] = []
 
 afterEach(async () => {
@@ -91,6 +95,78 @@ async function hitchEvaluation(
   })
 }
 
+type FailedTrajectory = 'canonical' | 'provider-only'
+
+interface FailedRunFixture {
+  readonly runId: string
+  readonly taskName: string
+  readonly trialName: string
+  readonly invalidReason?: string
+  readonly trajectory: FailedTrajectory
+}
+
+async function failedHitchEvaluation(
+  root: string,
+  evalId: string,
+  harnessRef: string,
+  runs: readonly FailedRunFixture[],
+): Promise<void> {
+  for (const run of runs) {
+    const runRoot = join(root, 'runs', run.runId)
+    const files: Array<Record<string, unknown>> = []
+    if (run.trajectory === 'canonical') {
+      const content = canonical(run.runId)
+      const trajectoryPath = 'trajectory/canonical/session.jsonl'
+      await mkdir(join(runRoot, 'trajectory/canonical'), { recursive: true })
+      await writeFile(join(runRoot, trajectoryPath), content, 'utf8')
+      files.push({
+        role: 'canonical_session', path: trajectoryPath, media_type: 'application/x-ndjson',
+        sha256: digest(content), bytes: Buffer.byteLength(content),
+      })
+    } else {
+      const content = `{"provider":"failed-eval","runId":"${run.runId}"}\n`
+      const trajectoryPath = 'trajectory/provider/events.jsonl'
+      await mkdir(join(runRoot, 'trajectory/provider'), { recursive: true })
+      await writeFile(join(runRoot, trajectoryPath), content, 'utf8')
+      files.push({
+        role: 'provider_events', path: trajectoryPath, media_type: 'application/x-ndjson',
+        sha256: digest(content), bytes: Buffer.byteLength(content),
+      })
+    }
+    await json(join(runRoot, 'trajectory.ref.json'), {
+      schema_version: '2', run_id: run.runId, files,
+    })
+    const valid = run.invalidReason === undefined
+    await json(join(runRoot, 'manifest.json'), {
+      schema_version: '1',
+      run_id: run.runId,
+      context: {
+        kind: 'benchmark_task', benchmark_id: 'gear-benchmark', benchmark_revision: 'revision-1',
+        task_id: run.taskName, task_digest: `digest-${run.taskName}`, verifier_identity: 'verifier-v1',
+      },
+      parent: { kind: 'eval', eval_id: evalId, trial_id: run.trialName, attempt: 1 },
+      status: valid ? 'succeeded' : 'failed',
+      harness: { requested_ref: harnessRef, harness_id: harnessRef, revision_identity: 'failed-revision' },
+      model: { requested_id: 'deepseek-chat', provider: 'test', effective_id: 'model-snapshot', identity_resolved: true },
+      protocol: { timeout_ms: 1_000 },
+      observation: valid
+        ? { status: 'valid', reward: 1 }
+        : { status: 'invalid', invalid_reason: run.invalidReason },
+      trajectory_ref: 'trajectory.ref.json',
+    })
+  }
+  await json(join(root, 'evals', evalId, 'result.json'), {
+    schema_version: '1', eval_id: evalId,
+    benchmark_id: 'gear-benchmark', benchmark_revision: 'revision-1', status: 'failed',
+    trials: runs.map(run => ({
+      trial_id: run.trialName, run_id: run.runId, task_id: run.taskName, attempt: 1,
+      ...(run.invalidReason === undefined
+        ? { observation_status: 'valid', reward: 1 }
+        : { observation_status: 'invalid', invalid_reason: run.invalidReason }),
+    })),
+  })
+}
+
 function evidence(evalId: string, runId: string, trialId: string, commit: string, reward: number) {
   return {
     provider: 'hitch-cli', conditionId: 'condition-1', effectiveConfigDigest: 'config-1',
@@ -104,7 +180,7 @@ function evidence(evalId: string, runId: string, trialId: string, commit: string
   }
 }
 
-async function harness(forgedCandidateRun = false): Promise<Harness> {
+async function harness(forgedCandidateRun = false, roundStatus = 'accepted'): Promise<Harness> {
   const root = await mkdtemp(join(tmpdir(), 'rear-gear-runtime-'))
   const gearRoot = join(root, 'gear')
   const hitchRoot = join(root, 'hitch')
@@ -132,7 +208,7 @@ async function harness(forgedCandidateRun = false): Promise<Harness> {
     batchId: 'batch-1',
     roundIndex: 1,
     roundCount: 1,
-    status: 'accepted',
+    status: roundStatus,
     createdAt,
     updatedAt,
     targetHarnessRef: baselineCommit,
@@ -186,6 +262,97 @@ async function harness(forgedCandidateRun = false): Promise<Harness> {
   return value
 }
 
+async function failedHarness(
+  invalidTrajectory: FailedTrajectory,
+  mismatch: 'run' | 'task' | 'trial' | 'attempt' | null = null,
+): Promise<FailedHarness> {
+  const root = await mkdtemp(join(tmpdir(), 'rear-gear-failed-runtime-'))
+  const gearRoot = join(root, 'gear')
+  const hitchRoot = join(root, 'hitch')
+  await mkdir(gearRoot, { recursive: true })
+  await mkdir(hitchRoot, { recursive: true })
+  const evolution = 'failed-evolution'
+  const round = 'failed-round'
+  const evalId = `eval_${'3'.repeat(32)}`
+  const harnessRef = 'c'.repeat(40)
+  const invalidReason = 'invalid observation: final answer is missing'
+  const runs: FailedRunFixture[] = [
+    { runId: `run_${'3'.repeat(32)}`, taskName: 'task-1', trialName: 'trial-1', trajectory: 'canonical' },
+    { runId: `run_${'4'.repeat(32)}`, taskName: 'task-2', trialName: 'trial-2', trajectory: 'provider-only' },
+    { runId: `run_${'5'.repeat(32)}`, taskName: 'task-3', trialName: 'trial-3', invalidReason, trajectory: invalidTrajectory },
+  ]
+  await failedHitchEvaluation(hitchRoot, evalId, harnessRef, runs)
+  const createdAt = '2026-08-25T00:00:00.000Z'
+  const updatedAt = '2026-08-25T00:01:00.000Z'
+  await json(join(gearRoot, 'registry.json'), {
+    schemaVersion: 1,
+    evolutions: [{ evolutionId: evolution, name: 'Failed baseline evaluation', status: 'active', createdAt, updatedAt }],
+  })
+  const trials = runs.map((run, index) => ({
+    taskName: mismatch === 'task' && index === 2 ? 'forged-task' : run.taskName,
+    trialName: mismatch === 'trial' && index === 2 ? 'forged-trial' : run.trialName,
+    runId: mismatch === 'run' && index === 2 ? `run_${'f'.repeat(32)}` : run.runId,
+    attempt: mismatch === 'attempt' && index === 2 ? 2 : 1,
+    status: run.invalidReason === undefined ? 'completed' : 'failed',
+    ...(run.invalidReason === undefined ? {} : { invalidReason: run.invalidReason }),
+  }))
+  await json(join(gearRoot, 'evolutions', evolution, 'rounds', `${round}.json`), {
+    evolutionId: evolution,
+    roundId: round,
+    batchId: 'batch-failed',
+    roundIndex: 1,
+    roundCount: 1,
+    status: 'failed',
+    createdAt,
+    updatedAt,
+    targetHarnessRef: harnessRef,
+    seedTaskRef: 'seed',
+    plan: {
+      seed: { model: 'deepseek-chat' },
+      heldOut: { model: 'deepseek-reasoner' },
+    },
+    candidatePool: [],
+    failedEvaluations: [{
+      phase: 'seed-baseline',
+      owner: { candidateId: 'failed-baseline', harnessRef, role: 'baseline' },
+      evidence: {
+        evalId,
+        provider: 'hitch',
+        dataset: 'seed',
+        requestedCommit: harnessRef,
+        actualCommit: harnessRef,
+        revisionIdentity: 'failed-revision',
+        runSetComplete: true,
+        trials,
+      },
+      failure: { code: 'invalid-observation', message: invalidReason },
+    }],
+    failure: { phase: 'seed-baseline', message: 'baseline evaluation failed closed' },
+  })
+  const ctx = new Context()
+  await ctx.plugin(SessionStore)
+  const sessionId = SessionId('rear-failed-session')
+  const sessions = ctx.get('sessions') as SessionStore
+  sessions.create(sessionId, { meta: { createdAt: 42, cwd: '/fixture' } })
+  await ctx.plugin(RefinementRuntime, {
+    gear: { root: gearRoot, watchDebounceMs: 5 },
+    hitch: { id: 'hitch', root: hitchRoot, watchDebounceMs: 5 },
+    trajectoryResponseMaxBytes: 65_536,
+    providerEvidencePageMaxBytes: 4_096,
+  })
+  const value: FailedHarness = {
+    ctx,
+    root,
+    sessionId,
+    evolutionId: `gear-evolution:${evolution}` as RefinementId,
+    roundId: `gear-round:${round}` as RefinementIterationId,
+    candidateRunId: runs[0]?.runId as HitchRunId,
+    invalidRunId: runs[2]?.runId as HitchRunId,
+  }
+  harnesses.push(value)
+  return value
+}
+
 describe('Gear-backed RefinementRuntime', () => {
   it('exposes no start or cancel control-plane methods', async () => {
     const value = await harness()
@@ -233,6 +400,124 @@ describe('Gear-backed RefinementRuntime', () => {
       sessionId: value.sessionId,
       refinementId: value.evolutionId,
     })).toThrow(/run membership mismatch/u)
+  })
+
+  it('projects every run from a failed baseline evaluation and retains invalid evidence', async () => {
+    const value = await failedHarness('canonical')
+    const detail = value.ctx.refinements.get({ sessionId: value.sessionId, refinementId: value.evolutionId })
+    if (!detail.ok) throw new Error(detail.error.message)
+    expect(detail.value).toMatchObject({
+      status: 'failed',
+      baselineCandidateId: 'gear-candidate:failed-baseline',
+      candidates: [{
+        id: 'gear-candidate:failed-baseline',
+        role: 'baseline',
+        requestedHarnessRef: 'c'.repeat(40),
+        revisionIdentity: 'failed-revision',
+      }],
+      iterations: [{
+        id: value.roundId,
+        status: 'failed',
+        failure: { code: 'seed-baseline', message: 'baseline evaluation failed closed' },
+        evaluationRefs: [{
+          candidateId: 'gear-candidate:failed-baseline',
+          requestedModelId: 'deepseek-chat',
+          failedEvaluation: {
+            phase: 'seed-baseline',
+            code: 'invalid-observation',
+          },
+        }],
+      }],
+    })
+    const evaluated = await value.ctx.refinements.evaluation({
+      sessionId: value.sessionId,
+      refinementId: value.evolutionId,
+      iterationId: value.roundId,
+      dimension: 'harness',
+      referenceRunId: null,
+    })
+    if (!evaluated.ok) throw new Error(evaluated.error.message)
+    expect(evaluated.value.evaluations).toHaveLength(1)
+    expect(evaluated.value.evaluations[0]?.status).toBe('failed')
+    expect(evaluated.value.evaluations[0]?.runs).toHaveLength(3)
+    expect(evaluated.value.evaluations[0]?.runs[2]?.observation).toEqual({
+      state: 'invalid',
+      reason: 'invalid observation: final answer is missing',
+    })
+    expect(evaluated.value.comparison.strict).toBe(false)
+    const trajectory = await value.ctx.refinements.trajectory({
+      sessionId: value.sessionId,
+      refinementId: value.evolutionId,
+      runId: value.invalidRunId,
+    })
+    expect(trajectory).toMatchObject({ ok: true, value: { runId: value.invalidRunId } })
+  })
+
+  it('reads provider-only evidence from an invalid run in a failed evaluation', async () => {
+    const value = await failedHarness('provider-only')
+    const evaluated = await value.ctx.refinements.evaluation({
+      sessionId: value.sessionId,
+      refinementId: value.evolutionId,
+      iterationId: value.roundId,
+      dimension: 'harness',
+      referenceRunId: null,
+    })
+    if (!evaluated.ok) throw new Error(evaluated.error.message)
+    expect(evaluated.value.evaluations[0]?.runs[2]).toMatchObject({
+      id: value.invalidRunId,
+      observation: { state: 'invalid', reason: 'invalid observation: final answer is missing' },
+      trajectory: { availability: 'provider-only', hasCanonical: false, providerFileCount: 1 },
+    })
+    const evidencePage = await value.ctx.refinements.providerEvidence({
+      sessionId: value.sessionId,
+      refinementId: value.evolutionId,
+      runId: value.invalidRunId,
+      fileOrdinal: 0,
+      cursor: null,
+    })
+    expect(evidencePage).toMatchObject({
+      ok: true,
+      value: { runId: value.invalidRunId, content: expect.stringContaining('failed-eval') },
+    })
+  })
+
+  it.each(['run', 'task', 'trial', 'attempt'] as const)(
+    'fails closed when failed evaluation %s identity differs from Hitch',
+    async mismatch => {
+      const value = await failedHarness('canonical', mismatch)
+      expect(() => value.ctx.refinements.get({
+        sessionId: value.sessionId,
+        refinementId: value.evolutionId,
+      })).toThrow(mismatch === 'run' ? /run membership mismatch/u : new RegExp(`${mismatch} identity mismatch`, 'u'))
+    },
+  )
+
+  it('keeps selection-running rounds active', async () => {
+    const value = await harness(false, 'selection-running')
+    const detail = value.ctx.refinements.get({ sessionId: value.sessionId, refinementId: value.evolutionId })
+    expect(detail).toMatchObject({
+      ok: true,
+      value: { status: 'running', activeIterationId: value.roundId },
+    })
+  })
+
+  it('does not expose Hitch runs that Gear did not reference', async () => {
+    const value = await harness()
+    const unownedEval = `eval_${'9'.repeat(32)}`
+    const unownedRun = `run_${'9'.repeat(32)}` as HitchRunId
+    await hitchEvaluation(join(value.root, 'hitch'), unownedEval, unownedRun, 'trial-unowned', 'unowned', 1)
+    await expect(value.ctx.refinements.trajectory({
+      sessionId: value.sessionId,
+      refinementId: value.evolutionId,
+      runId: unownedRun,
+    })).resolves.toMatchObject({ ok: false, error: { code: 'run-not-found' } })
+    await expect(value.ctx.refinements.providerEvidence({
+      sessionId: value.sessionId,
+      refinementId: value.evolutionId,
+      runId: unownedRun,
+      fileOrdinal: 0,
+      cursor: null,
+    })).resolves.toMatchObject({ ok: false, error: { code: 'run-not-found' } })
   })
 
 })

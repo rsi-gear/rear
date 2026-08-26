@@ -56,6 +56,7 @@ export function combinationScores(
     runCount: number
   }>()
   for (const item of evaluation.evaluations) {
+    if (item.ref.failedEvaluation !== undefined) continue
     for (const run of item.runs) {
       if (run.integrity !== 'valid' || run.observation.state !== 'valid') continue
       const modelId = run.model.effectiveId ?? run.model.requestedId

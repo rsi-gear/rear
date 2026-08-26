@@ -556,7 +556,9 @@ export class HitchRefinementEvidenceProvider implements RefinementEvidenceProvid
       : runs.find(run => run.id === request.referenceRunId && run.candidateId === referenceCandidate)
     const exclusions: RefinementComparisonExclusion[] = []
     const taskKeys = [...new Set(runs.map(run => run.taskKey))]
-    let identityCompatible = referenceRun !== undefined && referenceCandidate !== targetCandidate
+    let identityCompatible = request.refs.every(ref => ref.failedEvaluation === undefined)
+      && referenceRun !== undefined
+      && referenceCandidate !== targetCandidate
     for (const run of runs) {
       if (referenceRun === undefined) {
         exclusions.push({ runId: run.id, code: 'benchmark-reference-missing' })

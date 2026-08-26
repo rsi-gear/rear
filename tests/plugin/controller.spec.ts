@@ -236,4 +236,103 @@ describe('RefinementController', () => {
     })
     controller.dispose()
   })
+
+  it('opens a provider-only task from a single failed baseline evaluation without duplicating its run', async () => {
+    const candidateId = 'candidate-failed-baseline' as RefinementCandidateId
+    const iterationId = 'iteration-failed' as RefinementIterationId
+    const evalId = 'eval-failed' as HitchEvalId
+    const runId = 'run-failed' as HitchRunId
+    const evalRef = {
+      providerId: 'hitch',
+      evalId,
+      candidateId,
+      requestedModelId: 'model-a',
+      benchmarkId: 'benchmark-a',
+      benchmarkRevision: 'revision-a',
+      failedEvaluation: {
+        phase: 'seed-baseline',
+        code: 'invalid-observation',
+        message: 'invalid observation',
+      },
+    }
+    const value: RefinementRecordV1 = {
+      ...record('refinement-failed'),
+      status: 'failed',
+      baselineCandidateId: candidateId,
+      candidates: [{
+        id: candidateId,
+        role: 'baseline',
+        parentCandidateId: null,
+        requestedHarnessRef: 'harness-a',
+        revisionIdentity: 'revision-a',
+        label: 'Failed baseline',
+        createdAt: 1,
+      }],
+      iterations: [{
+        id: iterationId,
+        ordinal: 1,
+        status: 'failed',
+        candidateIds: [candidateId],
+        evaluationRefs: [evalRef],
+        createdAt: 1,
+        completedAt: 2,
+      }],
+    }
+    const client = remote([value])
+    client.evaluation = vi.fn(async request => ({
+      ok: true as const,
+      value: {
+        evidenceVersion: 'failed-evidence',
+        evaluations: [{
+          ref: evalRef,
+          status: 'failed' as const,
+          plannedTasks: 1,
+          settledTasks: 1,
+          runs: [{
+            id: runId,
+            evalId,
+            candidateId,
+            trialId: 'trial-1',
+            attempt: 1,
+            taskKey: 'task-key',
+            taskId: 'task-1',
+            execution: 'failed' as const,
+            observation: { state: 'invalid' as const, reason: 'invalid observation' },
+            integrity: 'valid' as const,
+            harness: { requestedRef: 'harness-a', id: 'harness-a', revisionIdentity: 'revision-a' },
+            model: { requestedId: 'model-a', provider: 'test', effectiveId: 'model-a' },
+            protocolIdentity: 'protocol-a',
+            trajectory: { availability: 'provider-only' as const, hasCanonical: false, providerFileCount: 1 },
+          }],
+          diagnostics: [],
+        }],
+        comparison: {
+          strict: false,
+          dimension: request.dimension,
+          referenceRunId: runId,
+          exclusions: [],
+          tasks: [{
+            taskKey: 'task-key',
+            taskId: 'task-1',
+            referenceRunIds: [runId],
+            candidateRunIds: [runId],
+            referenceMean: null,
+            candidateMean: null,
+            delta: null,
+            status: 'invalid' as const,
+          }],
+        },
+      },
+    }))
+    const controller = new RefinementController(client, SID)
+    await controller.ensure()
+    await controller.openTask('task-key')
+    expect(controller.getSnapshot()).toMatchObject({
+      level: 'comparison',
+      selectedRunIds: [runId],
+      attemptPairing: 'unpaired',
+      trajectories: { [runId]: null },
+    })
+    controller.dispose()
+  })
 })

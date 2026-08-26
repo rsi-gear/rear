@@ -2,6 +2,7 @@
 export type RefinementKey =
   | 'view.refinement' | 'empty.title' | 'empty.body' | 'loading' | 'unknown'
   | 'overview.title' | 'evaluation.title' | 'comparison.title' | 'back'
+  | 'evaluation.failedEvidence'
   | 'status' | 'objective' | 'iterations' | 'open' | 'strict' | 'exploratory'
   | 'task' | 'baseline' | 'candidate' | 'delta' | 'state' | 'compare'
   | 'attempts' | 'evidence.raw' | 'evidence.hide' | 'evidence.canonical' | 'unpaired'
@@ -46,12 +47,13 @@ export const en: Record<RefinementKey, string> = {
   'empty.body': 'No persisted experiments were found under the configured Gear state root.',
   loading: 'Loading…', unknown: 'Unknown',
   'overview.title': 'Refinement overview', 'evaluation.title': 'Iteration evaluation',
+  'evaluation.failedEvidence': 'Failed evaluation',
   'comparison.title': 'Task trajectory comparison', back: 'Back',
   status: 'Status', objective: 'Objective', iterations: 'Iterations', open: 'Open',
   strict: 'Strict comparison', exploratory: 'Exploratory comparison', task: 'Task',
   baseline: 'Baseline', candidate: 'Candidate', delta: 'Delta', state: 'State',
-  compare: 'Compare trajectories', attempts: 'attempts', 'evidence.raw': 'Raw trajectory',
-  'evidence.hide': 'Hide raw trajectory',
+  compare: 'Compare trajectories', attempts: 'attempts', 'evidence.raw': 'Raw evidence',
+  'evidence.hide': 'Hide raw evidence',
   'evidence.canonical': 'Canonical trajectory', unpaired: 'Unpaired attempts',
   'evidence.next': 'Next raw trajectory page', 'dimension.harness': 'Harness',
   'dimension.model': 'Model', runs: 'Runs',
@@ -113,12 +115,13 @@ export const zh: Record<RefinementKey, string> = {
   'empty.body': '配置的 Gear 状态目录中暂无已落盘实验。',
   loading: '加载中…', unknown: '未知',
   'overview.title': '迭代总览', 'evaluation.title': '迭代测评',
+  'evaluation.failedEvidence': '失败评测',
   'comparison.title': '任务轨迹对比', back: '返回',
   status: '状态', objective: '目标', iterations: '迭代', open: '打开',
   strict: '严格对比', exploratory: '探索性对比', task: '任务',
   baseline: '基线', candidate: '候选', delta: '差值', state: '状态',
-  compare: '对比轨迹', attempts: '次尝试', 'evidence.raw': '原始轨迹',
-  'evidence.hide': '收起原始轨迹',
+  compare: '对比轨迹', attempts: '次尝试', 'evidence.raw': '原始证据',
+  'evidence.hide': '收起原始证据',
   'evidence.canonical': '规范化轨迹', unpaired: '未配对尝试',
   'evidence.next': '下一页原始轨迹', 'dimension.harness': 'Harness',
   'dimension.model': '模型', runs: '运行记录',

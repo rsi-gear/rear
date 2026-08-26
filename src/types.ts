@@ -62,6 +62,12 @@ export interface RefinementEvaluationRef {
   readonly requestedModelId: string
   readonly benchmarkId: string
   readonly benchmarkRevision: string
+  /** Present only when Gear authoritatively recorded this as failed evaluation evidence. */
+  readonly failedEvaluation?: {
+    readonly phase: string
+    readonly code: string
+    readonly message: string
+  }
 }
 
 /** One ordered candidate-generation and evaluation interval. */

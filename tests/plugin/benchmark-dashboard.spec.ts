@@ -2,11 +2,15 @@ import { describe, expect, it } from 'vitest'
 import {
   BENCHMARK_REGRESSION_GUARDRAIL,
   benchmarkPortfolio,
+  combinationScores,
   type BenchmarkCombinationScore,
 } from '../../src/client/benchmark-dashboard.ts'
 import type {
+  HitchEvalId,
+  HitchRunId,
   RefinementCandidateId,
   RefinementCandidateRecord,
+  RefinementEvaluationView,
   RefinementIterationId,
 } from '../../src/types.ts'
 
@@ -55,6 +59,57 @@ function score(
 }
 
 describe('benchmark portfolio dashboard', () => {
+  it('never promotes valid observations carried by failed Gear evaluation evidence', () => {
+    const runId = 'run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as HitchRunId
+    const evaluation: RefinementEvaluationView = {
+      evidenceVersion: 'failed-evidence',
+      evaluations: [{
+        ref: {
+          providerId: 'hitch',
+          evalId: 'eval_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as HitchEvalId,
+          candidateId: baselineId,
+          requestedModelId: 'model',
+          benchmarkId: 'quality',
+          benchmarkRevision: '2026.08',
+          failedEvaluation: {
+            phase: 'seed-baseline',
+            code: 'invalid-observation',
+            message: 'one attempt was invalid',
+          },
+        },
+        status: 'failed',
+        plannedTasks: 1,
+        settledTasks: 1,
+        runs: [{
+          id: runId,
+          evalId: 'eval_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as HitchEvalId,
+          candidateId: baselineId,
+          trialId: 'trial-1',
+          attempt: 1,
+          taskKey: 'task-key',
+          taskId: 'task-1',
+          execution: 'succeeded',
+          observation: { state: 'valid', reward: 1 },
+          integrity: 'valid',
+          harness: { requestedRef: 'harness', id: 'harness', revisionIdentity: 'revision' },
+          model: { requestedId: 'model', provider: 'test', effectiveId: 'model-snapshot' },
+          protocolIdentity: 'protocol',
+          trajectory: { availability: 'missing', hasCanonical: false, providerFileCount: 0 },
+        }],
+        diagnostics: [],
+      }],
+      comparison: {
+        strict: false,
+        dimension: 'harness',
+        referenceRunId: runId,
+        exclusions: [],
+        tasks: [],
+      },
+    }
+
+    expect(combinationScores(iterationId, evaluation)).toEqual([])
+  })
+
   it('computes baseline deltas, regression guardrails, and the Pareto frontier', () => {
     const portfolio = benchmarkPortfolio([
       score(baselineId, 'quality', 0.60, 100),

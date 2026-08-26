@@ -266,15 +266,17 @@ export class RefinementController {
     const paired = shared === undefined
       ? null
       : candidate.find(run => run.attempt === shared.attempt) ?? null
-    const selected = shared !== undefined && paired !== null
+    const selectedCandidates = shared !== undefined && paired !== null
       ? [shared.id, paired.id]
       : [reference[0]?.id, candidate[0]?.id].filter((id): id is HitchRunId => id !== undefined)
+    const selected = [...new Set(selectedCandidates)]
+    const genuinelyPaired = selected.length > 1 && shared !== undefined && paired !== null
     this.store.set({
       ...this.store.getSnapshot(),
       selectedTaskKey: taskKey,
       level: 'comparison',
       selectedRunIds: selected,
-      attemptPairing: shared !== undefined && paired !== null ? 'paired' : 'unpaired',
+      attemptPairing: genuinelyPaired ? 'paired' : 'unpaired',
       trajectories: {},
       providerEvidence: null,
     })
