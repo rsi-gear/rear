@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type {
   HitchEvalId,
   HitchRunId,
@@ -77,6 +77,7 @@ async function run(root: string, evalId: HitchEvalId, value: RunFixture): Promis
   await json(join(directory, 'manifest.json'), {
     schema_version: '1',
     run_id: value.runId,
+    sealed: true,
     context: {
       kind: 'benchmark_task', benchmark_id: 'bench', benchmark_revision: 'rev', task_id: value.taskId ?? 'task-1',
       task_digest: 'task-digest', verifier_identity: 'verifier',
@@ -114,6 +115,19 @@ function ref(evalId: HitchEvalId, candidateId: RefinementCandidateId): Refinemen
 }
 
 describe('HitchRefinementEvidenceProvider', () => {
+  it('watches a Gear-owned eval id before its Hitch directory exists', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-hitch-early-watch-'))
+    roots.push(root)
+    await mkdir(join(root, 'evals'), { recursive: true })
+    const provider = new HitchRefinementEvidenceProvider({ id: 'hitch', root, watchDebounceMs: 5 })
+    const changed = vi.fn()
+    const evalId = 'eval_early_watch' as HitchEvalId
+    const dispose = provider.watchEval(evalId, changed)
+    await json(join(root, 'evals', evalId, 'request.json'), { benchmark_id: 'bench', benchmark_revision: 'rev' })
+    await vi.waitFor(() => { expect(changed).toHaveBeenCalled() }, { timeout: 5_000 })
+    dispose()
+  })
+
   it('preserves attempts, invalid observations, and canonical/provider-only availability', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-hitch-provider-'))
     roots.push(root)
@@ -226,6 +240,107 @@ describe('HitchRefinementEvidenceProvider', () => {
     const projection = await provider.evaluation(ref(corruptId, corrupt.candidateId))
     expect(projection.runs).toEqual([])
     expect(projection.diagnostics).toMatchObject([{ code: 'corrupt-run-link' }])
+  })
+
+  it('projects published progress trials before terminal result and rejects a conflicting final set', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-hitch-progress-'))
+    roots.push(root)
+    const evalId = 'eval_progress' as HitchEvalId
+    const candidateId = 'candidate-progress' as RefinementCandidateId
+    const fixture: RunFixture = {
+      runId: 'run_99999999999999999999999999999999' as HitchRunId,
+      candidateId,
+      trialId: 'task-one__1',
+      attempt: 1,
+      reward: 1,
+      trajectory: 'canonical',
+      taskId: 'task-one',
+    }
+    const progress = (trials: readonly Record<string, unknown>[], generation: number) => ({
+      schema_version: '1', eval_id: evalId, benchmark_id: 'bench', benchmark_revision: 'rev', status: 'running',
+      generation, planned_tasks: 2, planned_trials: 2, trials,
+      summary: {
+        settled_trials: trials.length,
+        valid_trials: trials.filter(trial => trial['observation_status'] === 'valid').length,
+        invalid_trials: trials.filter(trial => trial['observation_status'] === 'invalid').length,
+      },
+      started_at: '2026-08-26T00:00:00.000Z', updated_at: `2026-08-26T00:00:0${generation}.000Z`,
+    })
+    await json(join(root, 'evals', evalId, 'progress.json'), progress([], 0))
+    const provider = new HitchRefinementEvidenceProvider({ id: 'hitch', root, watchDebounceMs: 5 })
+    await expect(provider.evaluation(ref(evalId, candidateId))).resolves.toMatchObject({
+      status: 'running', plannedTasks: 2, settledTasks: 0, runs: [],
+    })
+
+    await run(root, evalId, fixture)
+    const trial = {
+      trial_id: fixture.trialId, run_id: fixture.runId, task_id: fixture.taskId,
+      attempt: 1, observation_status: 'valid', reward: 1,
+    }
+    await json(join(root, 'evals', evalId, 'progress.json'), progress([trial], 1))
+    const partial = await provider.evaluation(ref(evalId, candidateId))
+    expect(partial).toMatchObject({ status: 'running', plannedTasks: 2, settledTasks: 1 })
+    expect(partial.runs).toHaveLength(1)
+    await expect(provider.trajectory({ evalRef: ref(evalId, candidateId), runId: fixture.runId })).resolves.toMatchObject({
+      runId: fixture.runId,
+    })
+
+    await json(join(root, 'evals', evalId, 'result.json'), {
+      schema_version: '1', eval_id: evalId, benchmark_id: 'bench', benchmark_revision: 'rev', status: 'succeeded', trials: [trial],
+    })
+    await expect(provider.evaluation(ref(evalId, candidateId))).resolves.toMatchObject({ status: 'succeeded', runs: [{ id: fixture.runId }] })
+    await json(join(root, 'evals', evalId, 'result.json'), {
+      schema_version: '1', eval_id: evalId, benchmark_id: 'bench', benchmark_revision: 'rev', status: 'succeeded', trials: [],
+    })
+    await expect(provider.evaluation(ref(evalId, candidateId))).resolves.toMatchObject({
+      status: 'corrupt', runs: [], diagnostics: [{ code: 'corrupt-eval' }],
+    })
+  })
+
+  it('uses task progress during an active rerun while the terminal result is stale', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-hitch-rerun-progress-'))
+    roots.push(root)
+    const evalId = 'eval_rerun_progress' as HitchEvalId
+    const candidateId = 'candidate-rerun' as RefinementCandidateId
+    const retained: RunFixture = {
+      runId: 'run_77777777777777777777777777777777' as HitchRunId,
+      candidateId, trialId: 'task-one__1', attempt: 1, reward: 0.25, trajectory: 'canonical', taskId: 'task-one',
+    }
+    const invalid: RunFixture = {
+      runId: 'run_66666666666666666666666666666666' as HitchRunId,
+      candidateId, trialId: 'task-two__1', attempt: 1, invalidReason: 'infra', trajectory: 'provider-only', taskId: 'task-two',
+    }
+    const repaired: RunFixture = {
+      runId: 'run_55555555555555555555555555555555' as HitchRunId,
+      candidateId, trialId: 'task-two__1', attempt: 1, reward: 1, trajectory: 'canonical', taskId: 'task-two',
+    }
+    await evaluation(root, evalId, [retained, invalid])
+    await run(root, evalId, repaired)
+    const trials = [retained, repaired].map(value => ({
+      trial_id: value.trialId, run_id: value.runId, task_id: value.taskId, attempt: value.attempt,
+      observation_status: 'valid', reward: value.reward,
+    }))
+    await json(join(root, 'evals', evalId, 'progress.json'), {
+      schema_version: '1', eval_id: evalId, benchmark_id: 'bench', benchmark_revision: 'rev', status: 'running',
+      generation: 3, planned_tasks: 2, planned_trials: 2, trials,
+      summary: { settled_trials: 2, valid_trials: 2, invalid_trials: 0 },
+      started_at: '2026-08-26T00:00:00.000Z', updated_at: '2026-08-26T00:01:00.000Z',
+    })
+    const rerunId = `rerun_${'4'.repeat(32)}`
+    await json(join(root, 'evals', evalId, 'reruns', rerunId, 'state.json'), {
+      schema_version: '1', rerun_id: rerunId, eval_id: evalId, status: 'running',
+      tasks: ['task-two'], repaired_tasks: ['task-two'],
+      started_at: '2026-08-26T00:00:30.000Z', updated_at: '2026-08-26T00:01:00.000Z',
+    })
+    const provider = new HitchRefinementEvidenceProvider({ id: 'hitch', root, watchDebounceMs: 5 })
+    const projection = await provider.evaluation(ref(evalId, candidateId))
+    expect(projection).toMatchObject({
+      status: 'rerunning', plannedTasks: 2, settledTasks: 2,
+      runs: [
+        { id: retained.runId, observation: { state: 'valid', reward: 0.25 } },
+        { id: repaired.runId, observation: { state: 'valid', reward: 1 } },
+      ],
+    })
   })
 
   it('owns strict harness comparison and degrades protocol mismatches to exploratory evidence', async () => {

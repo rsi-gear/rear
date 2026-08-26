@@ -12,20 +12,41 @@ describe('offline trajectory surface', () => {
         { type: 'assistant/chunk', seq: 1, time: 1_025, data: { turn: 1, step: 1, chunk: { type: 'text', text: 'Inspecting…' } } },
         { type: 'tool/call', seq: 2, time: 1_050, data: { turn: 1, step: 1, name: 'fixture.verify', arguments: { task: 'unicode-paths' } } },
         { type: 'tool/result', seq: 3, time: 1_075, data: { turn: 1, step: 1, result: { ok: true } } },
-        { type: 'assistant/message', seq: 4, time: 1_100, data: { turn: 1, step: 1, message: { content: [{ type: 'text', text: 'Done.' }] } } },
+        { type: 'assistant/message', seq: 4, time: 1_100, data: { turn: 1, step: 1, message: { content: [
+          { type: 'reasoning', text: 'Inspecting…' },
+          { type: 'tool-call', id: 'call-1', name: 'fixture.verify', arguments: '{}' },
+          { type: 'text', text: 'Done.' },
+        ] } } },
       ],
     } as unknown as CanonicalTrajectoryDocument
 
     const rows = buildOfflineTrajectoryRows(document)
 
-    expect(rows).toHaveLength(5)
+    expect(rows).toHaveLength(4)
     expect(rows.map(row => row.kind)).toEqual([
-      'lifecycle', 'assistant', 'tool-call', 'tool-result', 'assistant',
+      'lifecycle', 'tool-call', 'tool-result', 'assistant',
     ])
-    expect(rows[1]).toMatchObject({ elapsedMs: 25, turn: 1, step: 1, summary: 'Inspecting…' })
-    expect(rows[2]).toMatchObject({ subject: 'fixture.verify', summary: '{"task":"unicode-paths"}' })
-    expect(rows[3]?.summary).toBe('{"ok":true}')
-    expect(rows[4]?.summary).toBe('Done.')
+    expect(rows[1]).toMatchObject({ subject: 'fixture.verify', summary: '{"task":"unicode-paths"}' })
+    expect(rows[2]?.summary).toBe('{"ok":true}')
+    expect(rows[3]).toMatchObject({ elapsedMs: 100, turn: 1, step: 1, summary: 'Inspecting…\n\nDone.' })
+  })
+
+  it('coalesces an unfinished assistant stream into one fallback row', () => {
+    const document = {
+      runId: 'run-stream',
+      header: { version: 0, id: 'trajectory-stream', createdAt: 3_000 },
+      events: [
+        { type: 'assistant/chunk', seq: 10, time: 3_010, data: { turn: 1, step: 2, chunk: { type: 'block-start', index: 0, blockType: 'reasoning' } } },
+        { type: 'assistant/chunk', seq: 11, time: 3_020, data: { turn: 1, step: 2, chunk: { type: 'reasoning-delta', index: 0, text: 'Let' } } },
+        { type: 'assistant/chunk', seq: 12, time: 3_030, data: { turn: 1, step: 2, chunk: { type: 'reasoning-delta', index: 0, text: ' me' } } },
+        { type: 'assistant/chunk', seq: 13, time: 3_040, data: { turn: 1, step: 2, chunk: { type: 'block-end', index: 0 } } },
+      ],
+    } as unknown as CanonicalTrajectoryDocument
+
+    expect(buildOfflineTrajectoryRows(document)).toMatchObject([{
+      key: '10:assistant/stream', type: 'assistant/stream', kind: 'assistant',
+      turn: 1, step: 2, summary: 'Let me',
+    }])
   })
 
   it('keeps unknown canonical events inspectable instead of dropping them', () => {

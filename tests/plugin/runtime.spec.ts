@@ -73,6 +73,7 @@ async function hitchEvaluation(
   await json(join(runRoot, 'manifest.json'), {
     schema_version: '1',
     run_id: runId,
+    sealed: true,
     context: {
       kind: 'benchmark_task', benchmark_id: 'gear-benchmark', benchmark_revision: 'revision-1',
       task_id: 'task-1', task_digest: 'task-digest', verifier_identity: 'verifier-v1',
@@ -392,6 +393,102 @@ describe('Gear-backed RefinementRuntime', () => {
     expect(trajectory.value.events.map(event => event.type)).toEqual([
       'turn/start', 'assistant/message', 'turn/end',
     ])
+  })
+
+  it('projects a rerunning Gear attempt from Hitch progress before repaired Gear evidence exists', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'rear-gear-progress-runtime-'))
+    const gearRoot = join(root, 'gear')
+    const hitchRoot = join(root, 'hitch')
+    await mkdir(gearRoot, { recursive: true })
+    await mkdir(hitchRoot, { recursive: true })
+    const evolution = 'progress-evolution'
+    const round = 'progress-round'
+    const evalId = `eval_${'8'.repeat(32)}`
+    const runId = `run_${'8'.repeat(32)}`
+    const commit = 'd'.repeat(40)
+    const ownerId = `champion-${commit}`
+    const createdAt = '2026-08-26T00:00:00.000Z'
+    await hitchEvaluation(hitchRoot, evalId, runId, 'trial-progress', 'baseline', 1)
+    await json(join(hitchRoot, 'evals', evalId, 'request.json'), {
+      benchmark_id: 'gear-benchmark', benchmark_revision: 'revision-1',
+    })
+    const trial = {
+      trial_id: 'trial-progress', run_id: runId, task_id: 'task-1', attempt: 1,
+      observation_status: 'valid', reward: 1,
+    }
+    await json(join(hitchRoot, 'evals', evalId, 'progress.json'), {
+      schema_version: '1', eval_id: evalId,
+      benchmark_id: 'gear-benchmark', benchmark_revision: 'revision-1', status: 'running', generation: 1,
+      planned_tasks: null, planned_trials: null, trials: [trial],
+      summary: { settled_trials: 1, valid_trials: 1, invalid_trials: 0 },
+      started_at: createdAt, updated_at: '2026-08-26T00:00:01.000Z',
+    })
+    await json(join(gearRoot, 'registry.json'), {
+      schemaVersion: 1,
+      evolutions: [{ evolutionId: evolution, name: 'Incremental benchmark', status: 'active', createdAt, updatedAt: createdAt }],
+    })
+    await json(join(gearRoot, 'evolutions', evolution, 'rounds', `${round}.json`), {
+      evolutionId: evolution, roundId: round, batchId: 'batch-progress', roundIndex: 1, roundCount: 1,
+      status: 'repairing-evaluation', createdAt, updatedAt: createdAt,
+      targetHarnessRef: commit, seedTaskRef: 'seed', heldOutRef: 'held-out',
+      plan: {
+        seed: { model: 'deepseek-chat', conditionId: 'condition-seed' },
+        heldOut: { model: 'deepseek-chat', conditionId: 'condition-held-out' },
+      },
+      candidatePool: [{
+        candidateId: 'candidate-1', parentHarnessRef: commit, parentCandidateIds: [ownerId], status: 'generating',
+      }],
+      evaluationAttempts: [{
+        provider: 'hitch-cli', evalId, phase: 'seed-baseline',
+        owner: { candidateId: ownerId, harnessRef: commit, role: 'baseline' },
+        conditionId: 'condition-seed', dataset: 'seed', requestedModelId: 'deepseek-chat', requestedCommit: commit,
+        status: 'rerunning', startedAt: createdAt,
+      }],
+    })
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    const sessionId = SessionId('rear-progress-session')
+    ;(ctx.get('sessions') as SessionStore).create(sessionId, { meta: { createdAt: 42, cwd: '/fixture' } })
+    await ctx.plugin(RefinementRuntime, {
+      gear: { root: gearRoot, watchDebounceMs: 5 },
+      hitch: { id: 'hitch', root: hitchRoot, watchDebounceMs: 5 },
+      trajectoryResponseMaxBytes: 65_536,
+      providerEvidencePageMaxBytes: 4_096,
+    })
+    const value: Harness = {
+      ctx, root, sessionId,
+      evolutionId: `gear-evolution:${evolution}` as RefinementId,
+      roundId: `gear-round:${round}` as RefinementIterationId,
+      candidateRunId: runId as HitchRunId,
+    }
+    harnesses.push(value)
+
+    const detail = ctx.refinements.get({ sessionId, refinementId: value.evolutionId })
+    expect(detail).toMatchObject({
+      ok: true,
+      value: {
+        status: 'running',
+        baselineCandidateId: `gear-candidate:${ownerId}`,
+        activeIterationId: value.roundId,
+        iterations: [{
+          status: 'rerunning',
+          evaluationRefs: [{ evalId, candidateId: `gear-candidate:${ownerId}`, rerunning: true }],
+        }],
+      },
+    })
+    const evaluated = await ctx.refinements.evaluation({
+      sessionId, refinementId: value.evolutionId, iterationId: value.roundId, dimension: 'harness', referenceRunId: null,
+    })
+    expect(evaluated).toMatchObject({
+      ok: true,
+      value: {
+        evaluations: [{ status: 'rerunning', plannedTasks: null, settledTasks: 1, runs: [{ id: runId }] }],
+        comparison: { strict: false, tasks: [{ status: 'pending', delta: null }] },
+      },
+    })
+    await expect(ctx.refinements.trajectory({
+      sessionId, refinementId: value.evolutionId, runId: runId as HitchRunId,
+    })).resolves.toMatchObject({ ok: true, value: { runId } })
   })
 
   it('fails closed when a Gear run id is not a member of its Hitch eval', async () => {

@@ -88,6 +88,7 @@ const RUN_ID = /^run_[0-9a-f]{32}$/u
 const ACTIVE_ROUND = new Set([
   'queued', 'baseline-running', 'preparing-candidate', 'candidate-editing',
   'building-candidate', 'candidate-seed-running', 'held-out-running', 'selection-running', 'promoting',
+  'repairing-evaluation',
 ])
 const SETTLED_ROUND = new Set(['accepted', 'rejected', 'rejected-for-substrate'])
 
@@ -141,6 +142,25 @@ const gearFailedEvaluationSchema = z.object({
   }).passthrough(),
 }).passthrough()
 
+const gearEvaluationAttemptSchema = z.object({
+  provider: z.string().min(1),
+  evalId: z.string().min(1),
+  phase: z.enum(['seed-baseline', 'seed-candidate', 'held-out-baseline', 'held-out-candidate']),
+  owner: z.object({
+    candidateId: z.string().min(1),
+    harnessRef: z.string().min(1),
+    role: z.enum(['baseline', 'candidate']),
+  }).passthrough(),
+  conditionId: z.string().min(1),
+  dataset: z.string().min(1),
+  requestedModelId: z.string(),
+  requestedCommit: z.string().min(1),
+  status: z.enum(['running', 'rerunning', 'settled', 'failed', 'cancelled']),
+  startedAt: z.string().min(1),
+  completedAt: z.string().min(1).optional(),
+  failure: z.object({ code: z.string().min(1), message: z.string().min(1) }).optional(),
+}).passthrough()
+
 const gearCandidateSchema = z.object({
   candidateId: z.string().min(1),
   parentHarnessRef: z.string().min(1),
@@ -163,9 +183,10 @@ const gearRoundSchema = z.object({
   updatedAt: z.string().min(1),
   targetHarnessRef: z.string().min(1),
   seedTaskRef: z.string().min(1),
+  heldOutRef: z.string().min(1).optional(),
   plan: z.object({
-    seed: z.object({ model: z.string().min(1) }).passthrough(),
-    heldOut: z.object({ model: z.string().min(1) }).passthrough(),
+    seed: z.object({ model: z.string().min(1), conditionId: z.string().min(1).optional() }).passthrough(),
+    heldOut: z.object({ model: z.string().min(1), conditionId: z.string().min(1).optional() }).passthrough(),
   }).passthrough(),
   parentAllocations: z.array(z.object({
     candidateId: z.string().min(1),
@@ -187,6 +208,7 @@ const gearRoundSchema = z.object({
     heldOutBaseline: gearEvidenceSchema.optional(),
     heldOutCandidate: gearEvidenceSchema.optional(),
   }).passthrough().optional(),
+  evaluationAttempts: z.array(gearEvaluationAttemptSchema).optional(),
   failedEvaluations: z.array(gearFailedEvaluationSchema).optional(),
   failure: z.object({ phase: z.string(), message: z.string() }).optional(),
 }).passthrough()
@@ -204,6 +226,7 @@ const gearRegistrySchema = z.object({
 
 type GearEvidence = z.infer<typeof gearEvidenceSchema>
 type GearFailedEvaluation = z.infer<typeof gearFailedEvaluationSchema>
+type GearEvaluationAttempt = z.infer<typeof gearEvaluationAttemptSchema>
 type GearEvaluationEvidence = GearEvidence | GearFailedEvaluation['evidence']
 type GearRound = z.infer<typeof gearRoundSchema>
 type GearRegistryEntry = z.infer<typeof gearRegistrySchema>['evolutions'][number]
@@ -311,6 +334,7 @@ function summaryOf(record: RefinementRecordV1): RefinementSummary {
 function roundStatus(status: string): RefinementIterationRecord['status'] {
   if (status === 'failed') return 'failed'
   if (SETTLED_ROUND.has(status)) return 'settled'
+  if (status === 'repairing-evaluation') return 'rerunning'
   if (status === 'baseline-running' || status === 'candidate-seed-running'
     || status === 'held-out-running' || status === 'promoting') return 'evaluating'
   return 'preparing'
@@ -537,6 +561,7 @@ export class RefinementRuntime extends Service {
     }
 
     const iterations: RefinementIterationRecord[] = rounds.map((round, index) => {
+      this.validateEvaluationAttempts(round)
       const createdAt = timestamp(round.createdAt)
       const ids: RefinementCandidateId[] = []
       for (const parent of round.parentBaselines ?? []) {
@@ -563,8 +588,23 @@ export class RefinementRuntime extends Service {
           ))
         }
       }
+      for (const attempt of round.evaluationAttempts ?? []) {
+        const candidate = round.candidatePool.find(value => value.candidateId === attempt.owner.candidateId)
+        ids.push(addCandidate(
+          attempt.owner.candidateId,
+          attempt.owner.role,
+          candidate?.parentCandidateIds[0] ?? null,
+          attempt.owner.harnessRef,
+          null,
+          attempt.owner.role === 'baseline'
+            ? `Baseline ${attempt.owner.candidateId}`
+            : `Candidate ${attempt.owner.candidateId}`,
+          timestamp(attempt.startedAt),
+        ))
+      }
       const hasFailedBaseline = (round.failedEvaluations ?? []).some(failed => failed.owner.role === 'baseline')
-      if (ids.length === 0 && !hasFailedBaseline) {
+      const hasAttemptBaseline = (round.evaluationAttempts ?? []).some(attempt => attempt.owner.role === 'baseline')
+      if (ids.length === 0 && !hasFailedBaseline && !hasAttemptBaseline) {
         ids.push(addCandidate(
           `initial-${round.targetHarnessRef}`,
           'baseline',
@@ -626,7 +666,8 @@ export class RefinementRuntime extends Service {
       code: latest.failure.phase || 'gear-round-failed',
       message: latest.failure.message,
     }
-    const activeIteration = [...iterations].reverse().find(iteration => iteration.status === 'preparing' || iteration.status === 'evaluating')
+    const activeIteration = [...iterations].reverse().find(iteration => iteration.status === 'preparing'
+      || iteration.status === 'evaluating' || iteration.status === 'rerunning')
     const record: RefinementRecordV1 = {
       schemaVersion: 1,
       id: refinementId(entry.evolutionId),
@@ -646,6 +687,11 @@ export class RefinementRuntime extends Service {
       version: versionOf({ entry, rounds }),
     }
     this.ensureEvidenceWatches(record)
+    for (const attempt of rounds.flatMap(round => round.evaluationAttempts ?? [])) {
+      if (attempt.provider === 'hitch-cli' && EVAL_ID.test(attempt.evalId)) {
+        this.ensureEvalWatch(attempt.evalId as HitchEvalId, record.id)
+      }
+    }
     return snapshot(record)
   }
 
@@ -656,9 +702,26 @@ export class RefinementRuntime extends Service {
       evidence: GearEvaluationEvidence | undefined,
       owner: RefinementCandidateId | null,
       model: string,
+      phase: GearEvaluationAttempt['phase'],
       failedEvaluation?: GearFailedEvaluation,
     ): void => {
       if (evidence === undefined || owner === null) return
+      const attempts = (round.evaluationAttempts ?? []).filter(attempt => attempt.provider === evidence.provider && attempt.evalId === evidence.evalId)
+      if (attempts.length > 1) throw new TypeError(`Gear eval attempt ownership is duplicated: ${evidence.evalId}`)
+      const attempt = attempts[0]
+      if (round.evaluationAttempts !== undefined && attempt === undefined) {
+        throw new TypeError(`Gear final eval has no durable attempt ownership: ${evidence.evalId}`)
+      }
+      if (attempt !== undefined) {
+        const evidenceCondition = 'conditionId' in evidence ? evidence.conditionId : undefined
+        if (attempt.phase !== phase || candidateId(attempt.owner.candidateId) !== owner
+          || attempt.dataset !== evidence.dataset || attempt.requestedCommit !== evidence.requestedCommit
+          || attempt.owner.harnessRef !== evidence.actualCommit || attempt.requestedModelId !== model
+          || (evidenceCondition !== undefined && attempt.conditionId !== evidenceCondition)
+          || (failedEvaluation === undefined ? attempt.status !== 'settled' : attempt.status === 'running')) {
+          throw new TypeError(`Gear final eval conflicts with attempt ownership: ${evidence.evalId}`)
+        }
+      }
       const key = `${evidence.evalId}\u0000${owner}`
       const existing = seen.get(key)
       if (existing !== undefined) {
@@ -674,25 +737,111 @@ export class RefinementRuntime extends Service {
       refs.push(ref)
     }
     for (const parent of round.parentBaselines ?? []) {
-      add(parent.evidence, candidateId(parent.parentCandidateId), round.plan.seed.model)
+      add(parent.evidence, candidateId(parent.parentCandidateId), round.plan.seed.model, 'seed-baseline')
     }
-    add(round.baseline, fallbackBaselineId, round.plan.seed.model)
+    add(round.baseline, fallbackBaselineId, round.plan.seed.model, 'seed-baseline')
     for (const candidate of round.candidatePool) {
-      add(candidate.seedEvaluation, candidateId(candidate.candidateId), round.plan.seed.model)
-      add(candidate.heldOutEvaluation, candidateId(candidate.candidateId), round.plan.heldOut.model)
+      add(candidate.seedEvaluation, candidateId(candidate.candidateId), round.plan.seed.model, 'seed-candidate')
+      add(candidate.heldOutEvaluation, candidateId(candidate.candidateId), round.plan.heldOut.model, 'held-out-candidate')
     }
     const promoted = round.promotionCandidateId ?? round.promotedCandidateId ?? round.candidatePool[0]?.candidateId
-    add(round.evaluation?.seedBaseline, fallbackBaselineId, round.plan.seed.model)
-    add(round.evaluation?.seedCandidate, promoted === undefined ? null : candidateId(promoted), round.plan.seed.model)
-    add(round.evaluation?.heldOutBaseline, fallbackBaselineId, round.plan.heldOut.model)
-    add(round.evaluation?.heldOutCandidate, promoted === undefined ? null : candidateId(promoted), round.plan.heldOut.model)
+    add(round.evaluation?.seedBaseline, fallbackBaselineId, round.plan.seed.model, 'seed-baseline')
+    add(round.evaluation?.seedCandidate, promoted === undefined ? null : candidateId(promoted), round.plan.seed.model, 'seed-candidate')
+    add(round.evaluation?.heldOutBaseline, fallbackBaselineId, round.plan.heldOut.model, 'held-out-baseline')
+    add(round.evaluation?.heldOutCandidate, promoted === undefined ? null : candidateId(promoted), round.plan.heldOut.model, 'held-out-candidate')
     for (const failed of round.failedEvaluations ?? []) {
       const model = failed.phase.startsWith('seed-')
         ? round.plan.seed.model
         : round.plan.heldOut.model
-      add(failed.evidence, candidateId(failed.owner.candidateId), model, failed)
+      add(failed.evidence, candidateId(failed.owner.candidateId), model, failed.phase as GearEvaluationAttempt['phase'], failed)
+    }
+    for (const attempt of round.evaluationAttempts ?? []) {
+      if (attempt.provider !== 'hitch-cli') continue
+      const owner = candidateId(attempt.owner.candidateId)
+      const key = `${attempt.evalId}\u0000${owner}`
+      const existing = seen.get(key)
+      if (existing !== undefined) {
+        if (attempt.status === 'rerunning') {
+          const current = refs[existing]
+          if (current !== undefined) {
+            const { failedEvaluation: _failedEvaluation, ...owned } = current
+            refs[existing] = { ...owned, rerunning: true }
+          }
+        }
+        continue
+      }
+      const ref = this.attemptEvaluationRef(attempt, owner)
+      if (ref === null) continue
+      seen.set(key, refs.length)
+      refs.push(ref)
     }
     return refs
+  }
+
+  private validateEvaluationAttempts(round: GearRound): void {
+    const identities = new Set<string>()
+    for (const attempt of round.evaluationAttempts ?? []) {
+      const identity = `${attempt.provider}\u0000${attempt.evalId}`
+      if (identities.has(identity)) throw new TypeError(`Gear eval attempt is duplicated: ${attempt.evalId}`)
+      identities.add(identity)
+      if (attempt.provider === 'hitch-cli' && !EVAL_ID.test(attempt.evalId)) throw new TypeError(`Gear Hitch eval id is invalid: ${attempt.evalId}`)
+      if (attempt.requestedCommit !== attempt.owner.harnessRef
+        || attempt.owner.role !== (attempt.phase.endsWith('baseline') ? 'baseline' : 'candidate')) {
+        throw new TypeError(`Gear eval attempt owner is invalid: ${attempt.evalId}`)
+      }
+      const condition = attempt.phase.startsWith('seed-') ? round.plan.seed : round.plan.heldOut
+      const dataset = attempt.phase.startsWith('seed-') ? round.seedTaskRef : round.heldOutRef
+      if (attempt.requestedModelId !== condition.model
+        || (condition.conditionId !== undefined && attempt.conditionId !== condition.conditionId)
+        || (dataset !== undefined && attempt.dataset !== dataset)) {
+        throw new TypeError(`Gear eval attempt condition is invalid: ${attempt.evalId}`)
+      }
+      const active = attempt.status === 'running' || attempt.status === 'rerunning'
+      const terminal = !active
+      if (terminal !== (attempt.completedAt !== undefined)
+        || (active && attempt.failure !== undefined)
+        || ((attempt.status === 'failed' || attempt.status === 'cancelled') && attempt.failure === undefined)) {
+        throw new TypeError(`Gear eval attempt lifecycle is invalid: ${attempt.evalId}`)
+      }
+      timestamp(attempt.startedAt)
+      if (attempt.completedAt !== undefined) timestamp(attempt.completedAt)
+      if (attempt.owner.role === 'candidate') {
+        const candidate = round.candidatePool.find(value => value.candidateId === attempt.owner.candidateId)
+        if (candidate?.sealedVersion?.commitOid !== attempt.owner.harnessRef) {
+          throw new TypeError(`Gear eval attempt candidate owner is invalid: ${attempt.evalId}`)
+        }
+      } else {
+        const allocation = round.parentAllocations?.find(value => value.parentCandidateId === attempt.owner.candidateId
+          && value.parentHarnessRef === attempt.owner.harnessRef)
+        const champion = attempt.owner.candidateId === `champion-${round.targetHarnessRef}`
+          && attempt.owner.harnessRef === round.targetHarnessRef
+        if (allocation === undefined && !champion) throw new TypeError(`Gear eval attempt baseline owner is invalid: ${attempt.evalId}`)
+      }
+    }
+  }
+
+  private attemptEvaluationRef(
+    attempt: GearEvaluationAttempt,
+    owner: RefinementCandidateId,
+  ): RefinementEvaluationRef | null {
+    const identity = this.hitchEvalIdentityForAttempt(attempt)
+    if (identity === null) return null
+    return {
+      providerId: this.provider.id,
+      evalId: attempt.evalId as HitchEvalId,
+      candidateId: owner,
+      requestedModelId: attempt.requestedModelId,
+      benchmarkId: identity.benchmarkId,
+      benchmarkRevision: identity.benchmarkRevision,
+      ...(attempt.status === 'rerunning' ? { rerunning: true as const } : {}),
+      ...((attempt.status !== 'failed' && attempt.status !== 'cancelled') ? {} : {
+        failedEvaluation: {
+          phase: attempt.phase,
+          code: attempt.failure?.code ?? attempt.status,
+          message: attempt.failure?.message ?? `Gear evaluation ${attempt.status}`,
+        },
+      }),
+    }
   }
 
   /** Convert a Gear eval only after its exact run membership agrees with Hitch. */
@@ -780,6 +929,41 @@ export class RefinementRuntime extends Service {
     return { benchmarkId, benchmarkRevision }
   }
 
+  private hitchEvalIdentityForAttempt(attempt: GearEvaluationAttempt): HitchEvalIdentity | null {
+    const directory = join(this.provider.rootPath, 'evals', attempt.evalId)
+    if (!existsSync(directory)) return null
+    const info = lstatSync(directory)
+    if (!info.isDirectory() || info.isSymbolicLink()) throw new TypeError(`Hitch eval directory is invalid: ${attempt.evalId}`)
+    const identities: HitchEvalIdentity[] = []
+    for (const name of ['request.json', 'progress.json', 'result.json']) {
+      const path = join(directory, name)
+      if (!existsSync(path)) continue
+      const value = regularJson(path, this.provider.rootPath, `Hitch eval ${attempt.evalId} ${name}`)
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        throw new TypeError(`Hitch eval ${attempt.evalId} ${name} is not an object`)
+      }
+      const record = value as Record<string, unknown>
+      if ((name === 'progress.json' || name === 'result.json')
+        && (record['schema_version'] !== '1' || record['eval_id'] !== attempt.evalId)) {
+        throw new TypeError(`Hitch eval ${attempt.evalId} ${name} identity mismatch`)
+      }
+      const benchmarkId = record['benchmark_id']
+      const benchmarkRevision = record['benchmark_revision']
+      if (typeof benchmarkId !== 'string' || benchmarkId.length === 0
+        || typeof benchmarkRevision !== 'string' || benchmarkRevision.length === 0) {
+        throw new TypeError(`Hitch eval ${attempt.evalId} ${name} has no canonical benchmark identity`)
+      }
+      identities.push({ benchmarkId, benchmarkRevision })
+    }
+    if (identities.length === 0) return null
+    const first = identities[0]!
+    if (identities.some(identity => identity.benchmarkId !== first.benchmarkId
+      || identity.benchmarkRevision !== first.benchmarkRevision)) {
+      throw new TypeError(`Hitch eval ${attempt.evalId} benchmark identity changed across artifacts`)
+    }
+    return first
+  }
+
   private ownedRecord(request: RefinementGetRequest): RefinementGetResult {
     const header = this.sessions().get(request.sessionId)?.header
     if (header === undefined) return rejected('refinement-not-found', 'Refine view Session was not found')
@@ -815,18 +999,22 @@ export class RefinementRuntime extends Service {
 
   private ensureEvidenceWatches(record: RefinementRecordV1): void {
     for (const ref of record.iterations.flatMap(iteration => iteration.evaluationRefs)) {
-      const key = String(ref.evalId)
-      const current = this.evidenceWatches.get(key)
-      if (current !== undefined) {
-        current.ids.add(record.id)
-        continue
-      }
-      const ids = new Set<RefinementId>([record.id])
-      const dispose = this.provider.watch(ref, () => {
-        for (const id of ids) this.emitChange(id)
-      })
-      this.evidenceWatches.set(key, { ids, dispose })
+      this.ensureEvalWatch(ref.evalId, record.id)
     }
+  }
+
+  private ensureEvalWatch(evalId: HitchEvalId, refinement: RefinementId): void {
+    const key = String(evalId)
+    const current = this.evidenceWatches.get(key)
+    if (current !== undefined) {
+      current.ids.add(refinement)
+      return
+    }
+    const ids = new Set<RefinementId>([refinement])
+    const dispose = this.provider.watchEval(evalId, () => {
+      for (const id of ids) this.emitChange(id)
+    })
+    this.evidenceWatches.set(key, { ids, dispose })
   }
 
   private queueGearChange(): void {

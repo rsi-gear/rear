@@ -2,7 +2,7 @@
 
 import { createHash } from 'node:crypto'
 import {
-  existsSync, lstatSync, readFileSync, realpathSync, watch,
+  existsSync, lstatSync, readFileSync, readdirSync, realpathSync, watch,
 } from 'node:fs'
 import type { FSWatcher } from 'node:fs'
 import { basename, isAbsolute, join, relative, resolve } from 'node:path'
@@ -65,6 +65,7 @@ interface EvalTrial {
   readonly observationStatus: 'valid' | 'invalid'
   readonly reward?: number
   readonly invalidReason?: string
+  readonly verifierResultRef?: string
 }
 
 interface EvalResult {
@@ -73,6 +74,16 @@ interface EvalResult {
   readonly benchmarkRevision: string
   readonly status: 'succeeded' | 'failed' | 'cancelled'
   readonly trials: readonly EvalTrial[]
+}
+
+interface EvalMembership {
+  readonly evalId: HitchEvalId
+  readonly benchmarkId: string
+  readonly benchmarkRevision: string
+  readonly status: 'running' | 'rerunning' | 'succeeded' | 'failed' | 'cancelled'
+  readonly trials: readonly EvalTrial[]
+  readonly partial: boolean
+  readonly plannedTasks: number | null
 }
 
 interface TrajectoryFile {
@@ -100,6 +111,7 @@ interface LoadedRun {
 
 const RUN_ID = /^run_[a-f0-9]{32}$/u
 const EVAL_ID = /^eval_[A-Za-z0-9._-]+$/u
+const RERUN_ID = /^rerun_[a-f0-9]{32}$/u
 const SHA256 = /^sha256:[a-f0-9]{64}$/u
 const TERMINAL = new Set(['succeeded', 'failed', 'timed_out', 'cancelled'])
 
@@ -295,6 +307,34 @@ function loadTrajectory(runDirectory: string, runId: HitchRunId, refValue: unkno
 }
 
 /** Parse one immutable eval result. */
+function parseTrial(value: unknown, index: number, label: string): EvalTrial {
+  const trial = object(value, `${label} trial ${index}`)
+  const runId = string(trial['run_id'], `${label} trial ${index} run_id`)
+  if (!RUN_ID.test(runId)) throw new TypeError(`${label} trial ${index} run_id is invalid`)
+  const status = trial['observation_status']
+  if (status !== 'valid' && status !== 'invalid') throw new TypeError(`${label} trial ${index} observation is invalid`)
+  return {
+    trialId: string(trial['trial_id'], `${label} trial ${index} trial_id`),
+    runId: runId as HitchRunId,
+    taskId: string(trial['task_id'], `${label} trial ${index} task_id`),
+    attempt: positiveInteger(trial['attempt'], `${label} trial ${index} attempt`),
+    observationStatus: status,
+    ...(status === 'valid' ? { reward: finite(trial['reward'], `${label} trial ${index} reward`) } : {
+      invalidReason: string(trial['invalid_reason'], `${label} trial ${index} invalid_reason`),
+    }),
+    ...(trial['verifier_result_ref'] === undefined ? {} : {
+      verifierResultRef: string(trial['verifier_result_ref'], `${label} trial ${index} verifier_result_ref`),
+    }),
+  }
+}
+
+function uniqueTrials(trials: readonly EvalTrial[], label: string): void {
+  if (new Set(trials.map(trial => trial.runId)).size !== trials.length
+    || new Set(trials.map(trial => trial.trialId)).size !== trials.length) {
+    throw new TypeError(`${label} trial identities must be unique`)
+  }
+}
+
 function parseEval(value: unknown, expected: RefinementEvaluationRef): EvalResult {
   const record = object(value, 'Hitch eval result')
   if (record['schema_version'] !== '1') throw new TypeError('unsupported Hitch eval result schema')
@@ -306,26 +346,8 @@ function parseEval(value: unknown, expected: RefinementEvaluationRef): EvalResul
     throw new TypeError('Hitch eval status is invalid')
   }
   if (!Array.isArray(record['trials'])) throw new TypeError('Hitch eval trials must be an array')
-  const trials = record['trials'].map((value, index): EvalTrial => {
-    const trial = object(value, `Hitch eval trial ${index}`)
-    const runId = string(trial['run_id'], `Hitch eval trial ${index} run_id`)
-    if (!RUN_ID.test(runId)) throw new TypeError(`Hitch eval trial ${index} run_id is invalid`)
-    const status = trial['observation_status']
-    if (status !== 'valid' && status !== 'invalid') throw new TypeError(`Hitch eval trial ${index} observation is invalid`)
-    return {
-      trialId: string(trial['trial_id'], `Hitch eval trial ${index} trial_id`),
-      runId: runId as HitchRunId,
-      taskId: string(trial['task_id'], `Hitch eval trial ${index} task_id`),
-      attempt: positiveInteger(trial['attempt'], `Hitch eval trial ${index} attempt`),
-      observationStatus: status,
-      ...(status === 'valid' ? { reward: finite(trial['reward'], `Hitch eval trial ${index} reward`) } : {
-        invalidReason: string(trial['invalid_reason'], `Hitch eval trial ${index} invalid_reason`),
-      }),
-    }
-  })
-  if (new Set(trials.map(trial => trial.runId)).size !== trials.length) {
-    throw new TypeError('Hitch eval run ids must be unique')
-  }
+  const trials = record['trials'].map((trial, index) => parseTrial(trial, index, 'Hitch eval'))
+  uniqueTrials(trials, 'Hitch eval')
   return {
     evalId: expected.evalId,
     benchmarkId: expected.benchmarkId,
@@ -333,6 +355,106 @@ function parseEval(value: unknown, expected: RefinementEvaluationRef): EvalResul
     status: record['status'] as EvalResult['status'],
     trials,
   }
+}
+
+function parseProgress(value: unknown, expected: RefinementEvaluationRef): EvalMembership {
+  const record = object(value, 'Hitch eval progress')
+  if (record['schema_version'] !== '1' || record['eval_id'] !== expected.evalId || record['status'] !== 'running') {
+    throw new TypeError('Hitch eval progress identity/status mismatch')
+  }
+  if (record['benchmark_id'] !== expected.benchmarkId || record['benchmark_revision'] !== expected.benchmarkRevision) {
+    throw new TypeError('Hitch eval progress benchmark identity mismatch')
+  }
+  nonNegativeInteger(record['generation'], 'Hitch eval progress generation')
+  const plannedTasks = record['planned_tasks'] === null
+    ? null
+    : nonNegativeInteger(record['planned_tasks'], 'Hitch eval progress planned_tasks')
+  const plannedTrials = record['planned_trials'] === null
+    ? null
+    : nonNegativeInteger(record['planned_trials'], 'Hitch eval progress planned_trials')
+  if (!Array.isArray(record['trials'])) throw new TypeError('Hitch eval progress trials must be an array')
+  const trials = record['trials'].map((trial, index) => parseTrial(trial, index, 'Hitch eval progress'))
+  uniqueTrials(trials, 'Hitch eval progress')
+  if (plannedTrials !== null && trials.length > plannedTrials) {
+    throw new TypeError('Hitch eval progress has more settled than planned trials')
+  }
+  if (plannedTasks !== null && new Set(trials.map(trial => trial.taskId)).size > plannedTasks) {
+    throw new TypeError('Hitch eval progress has more settled than planned tasks')
+  }
+  const sorted = [...trials].sort((left, right) => left.taskId.localeCompare(right.taskId)
+    || left.attempt - right.attempt || left.trialId.localeCompare(right.trialId))
+  if (sorted.some((trial, index) => trial !== trials[index])) throw new TypeError('Hitch eval progress trials are not canonical')
+  const summary = object(record['summary'], 'Hitch eval progress summary')
+  const valid = trials.filter(trial => trial.observationStatus === 'valid').length
+  if (summary['settled_trials'] !== trials.length || summary['valid_trials'] !== valid
+    || summary['invalid_trials'] !== trials.length - valid) {
+    throw new TypeError('Hitch eval progress summary differs from trials')
+  }
+  if (timestamp(record['started_at']) === undefined || timestamp(record['updated_at']) === undefined) {
+    throw new TypeError('Hitch eval progress timestamps are invalid')
+  }
+  return {
+    evalId: expected.evalId,
+    benchmarkId: expected.benchmarkId,
+    benchmarkRevision: expected.benchmarkRevision,
+    status: 'running',
+    trials,
+    partial: true,
+    plannedTasks,
+  }
+}
+
+function trialIdentity(trial: EvalTrial): string {
+  return canonicalJson({
+    trialId: trial.trialId,
+    runId: trial.runId,
+    taskId: trial.taskId,
+    attempt: trial.attempt,
+    observationStatus: trial.observationStatus,
+    reward: trial.reward,
+    invalidReason: trial.invalidReason,
+    verifierResultRef: trial.verifierResultRef,
+  })
+}
+
+function reconcileProgress(result: EvalResult, progress: EvalMembership): void {
+  if (result.benchmarkId !== progress.benchmarkId || result.benchmarkRevision !== progress.benchmarkRevision
+    || result.trials.length !== progress.trials.length) {
+    throw new TypeError('Hitch eval result/progress membership mismatch')
+  }
+  const byTrial = new Map(progress.trials.map(trial => [trial.trialId, trialIdentity(trial)]))
+  if (result.trials.some(trial => byTrial.get(trial.trialId) !== trialIdentity(trial))) {
+    throw new TypeError('Hitch eval result/progress trial identity mismatch')
+  }
+}
+
+/** Return whether Hitch has one validated active task-level rerun. */
+function hasActiveRerun(directory: string, evalId: HitchEvalId): boolean {
+  const reruns = join(directory, 'reruns')
+  if (!existsSync(reruns)) return false
+  const info = lstatSync(reruns)
+  if (!info.isDirectory() || info.isSymbolicLink()) throw new TypeError('Hitch eval reruns directory is invalid')
+  let running = 0
+  for (const entry of readdirSync(reruns, { withFileTypes: true })) {
+    if (!RERUN_ID.test(entry.name)) continue
+    if (!entry.isDirectory() || entry.isSymbolicLink()) throw new TypeError('Hitch eval rerun directory is invalid')
+    const statePath = join(reruns, entry.name, 'state.json')
+    if (!existsSync(statePath)) continue
+    const state = object(json(statePath, 'Hitch eval rerun state'), 'Hitch eval rerun state')
+    if (state['schema_version'] !== '1' || state['rerun_id'] !== entry.name || state['eval_id'] !== evalId
+      || !['running', 'completed', 'failed'].includes(String(state['status']))) {
+      throw new TypeError('Hitch eval rerun state identity/status mismatch')
+    }
+    if (!Array.isArray(state['tasks']) || !Array.isArray(state['repaired_tasks'])
+      || state['tasks'].some(task => typeof task !== 'string' || task.length === 0)
+      || state['repaired_tasks'].some(task => typeof task !== 'string' || task.length === 0)
+      || timestamp(state['started_at']) === undefined || timestamp(state['updated_at']) === undefined) {
+      throw new TypeError('Hitch eval rerun state is invalid')
+    }
+    if (state['status'] === 'running') running += 1
+  }
+  if (running > 1) throw new TypeError('Hitch eval has multiple active reruns')
+  return running === 1
 }
 
 /** Normalize a millisecond or ISO timestamp when recorded. */
@@ -346,7 +468,7 @@ function timestamp(value: unknown): number | undefined {
 }
 
 /** Load and cross-check one run referenced by an eval trial. */
-function loadRun(root: string, ref: RefinementEvaluationRef, trial: EvalTrial): LoadedRun {
+function loadRun(root: string, ref: RefinementEvaluationRef, trial: EvalTrial, requireSealed = false): LoadedRun {
   const directory = join(root, 'runs', trial.runId)
   const info = lstatSync(directory)
   if (!info.isDirectory() || info.isSymbolicLink() || basename(realpathSync(directory)) !== trial.runId) {
@@ -354,6 +476,7 @@ function loadRun(root: string, ref: RefinementEvaluationRef, trial: EvalTrial): 
   }
   const manifest = object(json(join(directory, 'manifest.json'), 'Hitch run manifest'), 'Hitch run manifest')
   if (manifest['schema_version'] !== '1' || manifest['run_id'] !== trial.runId) throw new TypeError('Hitch run identity mismatch')
+  if (requireSealed && manifest['sealed'] !== true) throw new TypeError('Hitch progress run is not sealed')
   const context = object(manifest['context'], 'Hitch run context')
   const parent = object(manifest['parent'], 'Hitch run parent')
   if (context['kind'] !== 'benchmark_task'
@@ -378,6 +501,9 @@ function loadRun(root: string, ref: RefinementEvaluationRef, trial: EvalTrial): 
   if (trial.observationStatus === 'invalid'
     && (observation?.['status'] !== 'invalid' || observation['invalid_reason'] !== trial.invalidReason)) {
     throw new TypeError('Hitch run invalid observation differs from eval trial')
+  }
+  if (trial.verifierResultRef !== undefined && observation?.['verifier_result_ref'] !== trial.verifierResultRef) {
+    throw new TypeError('Hitch run verifier reference differs from eval trial')
   }
   const harness = object(manifest['harness'], 'Hitch run harness')
   const model = object(manifest['model'], 'Hitch run model')
@@ -501,20 +627,9 @@ export class HitchRefinementEvidenceProvider implements RefinementEvidenceProvid
     if (!existsSync(directory)) throw new RefinementProviderError('evaluation-not-found', `Hitch eval "${ref.evalId}" was not found`)
     const info = lstatSync(directory)
     if (!info.isDirectory() || info.isSymbolicLink()) throw new TypeError('Hitch eval directory is invalid')
-    const resultPath = join(directory, 'result.json')
-    if (!existsSync(resultPath)) {
-      return {
-        ref,
-        status: 'running',
-        plannedTasks: this.plannedTasks(directory),
-        settledTasks: 0,
-        runs: [],
-        diagnostics: [],
-      }
-    }
-    let result: EvalResult
+    let membership: EvalMembership | null
     try {
-      result = parseEval(json(resultPath, 'Hitch eval result'), ref)
+      membership = this.membership(directory, ref)
     } catch (error) {
       return {
         ref,
@@ -525,20 +640,30 @@ export class HitchRefinementEvidenceProvider implements RefinementEvidenceProvid
         diagnostics: [{ code: 'corrupt-eval', message: error instanceof Error ? error.message : String(error) }],
       }
     }
+    if (membership === null) {
+      return {
+        ref,
+        status: 'running',
+        plannedTasks: this.plannedTasks(directory),
+        settledTasks: 0,
+        runs: [],
+        diagnostics: [],
+      }
+    }
     const runs: RefinementRunView[] = []
     const diagnostics: RefinementFailure[] = []
-    for (const trial of result.trials) {
+    for (const trial of membership.trials) {
       try {
-        runs.push(loadRun(this.root, ref, trial).view)
+        runs.push(loadRun(this.root, ref, trial, membership.partial).view)
       } catch (error) {
         diagnostics.push({ code: 'corrupt-run-link', message: `${trial.runId}: ${error instanceof Error ? error.message : String(error)}` })
       }
     }
     return {
       ref,
-      status: result.status,
-      plannedTasks: new Set(result.trials.map(trial => trial.taskId)).size,
-      settledTasks: new Set(result.trials.map(trial => trial.taskId)).size,
+      status: membership.status,
+      plannedTasks: membership.plannedTasks,
+      settledTasks: new Set(membership.trials.map(trial => trial.taskId)).size,
       runs,
       diagnostics,
     }
@@ -557,6 +682,7 @@ export class HitchRefinementEvidenceProvider implements RefinementEvidenceProvid
     const exclusions: RefinementComparisonExclusion[] = []
     const taskKeys = [...new Set(runs.map(run => run.taskKey))]
     let identityCompatible = request.refs.every(ref => ref.failedEvaluation === undefined)
+      && projections.every(projection => projection.status === 'succeeded')
       && referenceRun !== undefined
       && referenceCandidate !== targetCandidate
     for (const run of runs) {
@@ -606,6 +732,9 @@ export class HitchRefinementEvidenceProvider implements RefinementEvidenceProvid
       }
       const referenceMean = mean(reference)
       const candidateMean = mean(candidate)
+      const provisional = projections.some(projection => (projection.status === 'queued'
+        || projection.status === 'running' || projection.status === 'rerunning')
+        && (projection.ref.candidateId === referenceCandidate || projection.ref.candidateId === targetCandidate))
       return {
         taskKey,
         taskId: taskRuns[0]?.taskId ?? 'unknown',
@@ -613,8 +742,8 @@ export class HitchRefinementEvidenceProvider implements RefinementEvidenceProvid
         candidateRunIds: candidate.map(run => run.id),
         referenceMean,
         candidateMean,
-        delta: referenceMean === null || candidateMean === null ? null : candidateMean - referenceMean,
-        status: taskStatus(reference, candidate, referenceMean, candidateMean),
+        delta: provisional || referenceMean === null || candidateMean === null ? null : candidateMean - referenceMean,
+        status: provisional ? 'pending' : taskStatus(reference, candidate, referenceMean, candidateMean),
       }
     }).sort((left, right) => {
       const order = ['regressed', 'invalid', 'improved', 'unchanged', 'pending']
@@ -703,13 +832,19 @@ export class HitchRefinementEvidenceProvider implements RefinementEvidenceProvid
   /** Subscribe to eval and run-directory changes with one debounced callback. */
   watch(ref: RefinementEvaluationRef, onChange: () => void): () => void {
     this.assertRef(ref)
+    return this.watchEval(ref.evalId, onChange)
+  }
+
+  /** Subscribe before benchmark identity is available, using only a Gear-owned eval id. */
+  watchEval(evalId: HitchEvalId, onChange: () => void): () => void {
+    if (!EVAL_ID.test(evalId)) throw new TypeError('refinement eval id is invalid')
     const watchers: FSWatcher[] = []
     let timer: ReturnType<typeof setTimeout> | undefined
     const notify = (): void => {
       if (timer !== undefined) clearTimeout(timer)
       timer = setTimeout(onChange, this.watchDebounceMs)
     }
-    for (const path of [join(this.root, 'evals', ref.evalId), join(this.root, 'evals'), join(this.root, 'runs')]) {
+    for (const path of [join(this.root, 'evals', evalId), join(this.root, 'evals'), join(this.root, 'runs'), this.root]) {
       if (!existsSync(path)) continue
       watchers.push(watch(path, { persistent: false }, notify))
     }
@@ -741,16 +876,36 @@ export class HitchRefinementEvidenceProvider implements RefinementEvidenceProvid
     }
   }
 
+  private membership(directory: string, ref: RefinementEvaluationRef): EvalMembership | null {
+    const resultPath = join(directory, 'result.json')
+    const progressPath = join(directory, 'progress.json')
+    const progress = existsSync(progressPath) ? parseProgress(json(progressPath, 'Hitch eval progress'), ref) : null
+    if (ref.rerunning === true || hasActiveRerun(directory, ref.evalId)) {
+      if (progress === null) throw new TypeError('Hitch rerun has no task-level progress')
+      return { ...progress, status: 'rerunning' }
+    }
+    if (!existsSync(resultPath)) return progress
+    const result = parseEval(json(resultPath, 'Hitch eval result'), ref)
+    if (progress !== null) reconcileProgress(result, progress)
+    return {
+      ...result,
+      partial: false,
+      plannedTasks: progress?.plannedTasks ?? new Set(result.trials.map(trial => trial.taskId)).size,
+    }
+  }
+
   /** Resolve one run only after proving its membership in the requested eval. */
   private async ownedRun(ref: RefinementEvaluationRef, runId: HitchRunId): Promise<LoadedRun> {
     const projection = await this.evaluation(ref)
     if (!projection.runs.some(run => run.id === runId)) {
       throw new RefinementProviderError('run-not-found', `run "${runId}" does not belong to eval "${ref.evalId}"`)
     }
-    const result = parseEval(json(join(this.root, 'evals', ref.evalId, 'result.json'), 'Hitch eval result'), ref)
-    const trial = result.trials.find(item => item.runId === runId)
-    if (trial === undefined) throw new RefinementProviderError('run-not-found', `run "${runId}" was not found in eval result`)
-    return loadRun(this.root, ref, trial)
+    const directory = join(this.root, 'evals', ref.evalId)
+    const membership = this.membership(directory, ref)
+    if (membership === null) throw new RefinementProviderError('run-not-found', `eval "${ref.evalId}" has no published membership`)
+    const trial = membership.trials.find(item => item.runId === runId)
+    if (trial === undefined) throw new RefinementProviderError('run-not-found', `run "${runId}" was not found in eval membership`)
+    return loadRun(this.root, ref, trial, membership.partial)
   }
 
   /** Encode an evidence cursor tied to one immutable digest. */

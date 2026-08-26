@@ -56,6 +56,38 @@ function text(value: RefinementJsonValue | undefined): string {
   return json(value)
 }
 
+function assistantContentText(value: RefinementJsonValue | undefined): string {
+  if (!Array.isArray(value)) return text(value)
+  return value.map(item => {
+    const content = object(item)
+    const type = string(content?.type)
+    if (type !== 'reasoning' && type !== 'text') return ''
+    return text(content?.text ?? content?.content)
+  }).filter(Boolean).join('\n\n')
+}
+
+function assistantLocation(event: CanonicalTrajectoryEvent): string | null {
+  const data = object(event.data)
+  const turn = number(data?.turn)
+  const step = number(data?.step)
+  return turn === null || step === null ? null : `${turn}:${step}`
+}
+
+function streamedAssistantText(events: readonly CanonicalTrajectoryEvent[]): string {
+  let previousBlock: number | null = null
+  let output = ''
+  for (const event of events) {
+    const chunk = object(object(event.data)?.chunk)
+    const value = string(chunk?.text)
+    if (value === null) continue
+    const block = number(chunk?.index)
+    if (output !== '' && block !== null && previousBlock !== null && block !== previousBlock) output += '\n\n'
+    output += value
+    if (block !== null) previousBlock = block
+  }
+  return output
+}
+
 function eventPresentation(event: CanonicalTrajectoryEvent): {
   kind: OfflineTrajectoryKind
   subject: string | null
@@ -68,7 +100,7 @@ function eventPresentation(event: CanonicalTrajectoryEvent): {
       return { kind: 'assistant', subject: null, callId: null, summary: text(data?.chunk) }
     case 'assistant/message': {
       const message = object(data?.message)
-      return { kind: 'assistant', subject: null, callId: null, summary: text(message?.content ?? data?.content) }
+      return { kind: 'assistant', subject: null, callId: null, summary: assistantContentText(message?.content ?? data?.content) }
     }
     case 'tool/call':
       return {
@@ -98,9 +130,55 @@ function eventPresentation(event: CanonicalTrajectoryEvent): {
 /** Convert the Remote-safe canonical document into stable timeline rows. */
 export function buildOfflineTrajectoryRows(document: CanonicalTrajectoryDocument): readonly OfflineTrajectoryRow[] {
   const origin = document.events[0]?.time ?? document.header.createdAt
-  return document.events.map(event => {
+  // Canonical sessions retain provider streaming deltas for fidelity. Once a
+  // step has its authoritative assistant/message, those deltas are transport
+  // detail rather than separate ledger messages.
+  const finalizedAssistantLocations = new Set(document.events.flatMap(event => {
+    const location = event.type === 'assistant/message' ? assistantLocation(event) : null
+    return location === null ? [] : [location]
+  }))
+  const unfinishedStreams = new Map<string, CanonicalTrajectoryEvent[]>()
+  for (const event of document.events) {
+    if (event.type !== 'assistant/chunk') continue
+    const location = assistantLocation(event)
+    if (location === null || finalizedAssistantLocations.has(location)) continue
+    const events = unfinishedStreams.get(location) ?? []
+    events.push(event)
+    unfinishedStreams.set(location, events)
+  }
+  return document.events.flatMap(event => {
+    if (event.type === 'assistant/chunk') {
+      const location = assistantLocation(event)
+      if (location === null || finalizedAssistantLocations.has(location)) return []
+      const events = unfinishedStreams.get(location)
+      if (events === undefined || events[0] !== event) return []
+      const summary = streamedAssistantText(events)
+      if (summary === '') return []
+      const data = object(event.data)
+      const last = events.at(-1) as CanonicalTrajectoryEvent
+      return [{
+        key: `${event.seq}:assistant/stream`,
+        type: 'assistant/stream',
+        seq: event.seq,
+        time: event.time,
+        elapsedMs: Math.max(0, event.time - origin),
+        turn: number(data?.turn),
+        step: number(data?.step),
+        kind: 'assistant' as const,
+        subject: null,
+        callId: null,
+        summary,
+        detail: json({
+          type: 'assistant/stream',
+          sourceEventCount: events.length,
+          sourceSeqStart: event.seq,
+          sourceSeqEnd: last.seq,
+          data: { turn: data?.turn ?? null, step: data?.step ?? null, content: summary },
+        }, true),
+      }]
+    }
     const data = object(event.data)
-    return {
+    return [{
       key: `${event.seq}:${event.type}`,
       type: event.type,
       seq: event.seq,
@@ -110,7 +188,7 @@ export function buildOfflineTrajectoryRows(document: CanonicalTrajectoryDocument
       step: number(data?.step),
       ...eventPresentation(event),
       detail: json(event, true),
-    }
+    }]
   })
 }
 

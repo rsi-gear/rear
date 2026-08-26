@@ -62,6 +62,8 @@ export interface RefinementEvaluationRef {
   readonly requestedModelId: string
   readonly benchmarkId: string
   readonly benchmarkRevision: string
+  /** Gear currently owns an explicit task-level rerun for this eval. */
+  readonly rerunning?: true
   /** Present only when Gear authoritatively recorded this as failed evaluation evidence. */
   readonly failedEvaluation?: {
     readonly phase: string
@@ -74,7 +76,7 @@ export interface RefinementEvaluationRef {
 export interface RefinementIterationRecord {
   readonly id: RefinementIterationId
   readonly ordinal: number
-  readonly status: 'preparing' | 'evaluating' | 'settled' | 'failed' | 'cancelled'
+  readonly status: 'preparing' | 'evaluating' | 'rerunning' | 'settled' | 'failed' | 'cancelled'
   readonly candidateIds: readonly RefinementCandidateId[]
   readonly evaluationRefs: readonly RefinementEvaluationRef[]
   readonly createdAt: number
@@ -153,7 +155,7 @@ export interface RefinementRunView {
 /** One Hitch evaluation projection with all attempts retained. */
 export interface RefinementEvaluationProjection {
   readonly ref: RefinementEvaluationRef
-  readonly status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'corrupt'
+  readonly status: 'queued' | 'running' | 'rerunning' | 'succeeded' | 'failed' | 'cancelled' | 'corrupt'
   readonly plannedTasks: number | null
   readonly settledTasks: number
   readonly runs: readonly RefinementRunView[]

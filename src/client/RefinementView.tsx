@@ -75,7 +75,7 @@ const ENGLISH_T = (key: RefinementKey): string => en[key]
 
 const STATUS_KEYS = {
   queued: 'status.queued', preparing: 'status.preparing', evaluating: 'status.evaluating', settled: 'status.settled',
-  running: 'status.running', 'awaiting-review': 'status.awaitingReview', completed: 'status.completed',
+  running: 'status.running', rerunning: 'status.rerunning', 'awaiting-review': 'status.awaitingReview', completed: 'status.completed',
   succeeded: 'status.succeeded', failed: 'status.failed', 'timed-out': 'status.timedOut', cancelled: 'status.cancelled',
   corrupt: 'status.corrupt', pending: 'status.pending', regressed: 'status.regressed', invalid: 'status.invalid',
   improved: 'status.improved', unchanged: 'status.unchanged', valid: 'status.valid', missing: 'status.missing',
@@ -421,7 +421,7 @@ export function RefinementView({
                   ? overviewPortfolio.guardrailChecks === 0
                     ? t('unknown')
                     : `${overviewPortfolio.guardrailChecks - overviewPortfolio.guardrailViolations}/${overviewPortfolio.guardrailChecks}`
-                  : best === null ? t('unknown') : `${best.taskCount}/${display(best.plannedTaskCount, t('unknown'))}`}
+                  : best === null ? t('unknown') : `${best.taskCount}/${display(best.plannedTaskCount, '?')}`}
               </span>
               <span className={css.fact}>
                 <span className={css.factLabel}>{t('overview.updated')}</span>
@@ -513,6 +513,10 @@ export function RefinementView({
         score: activeScores.find(item => item.candidateId === candidateId) ?? null,
         failed: activeEvaluations.some(item => item.ref.candidateId === candidateId
           && item.ref.failedEvaluation !== undefined),
+        rerunning: activeEvaluations.some(item => item.ref.candidateId === candidateId
+          && item.status === 'rerunning'),
+        running: activeEvaluations.some(item => item.ref.candidateId === candidateId
+          && (item.status === 'queued' || item.status === 'running' || item.status === 'rerunning')),
       }
     })
     const comparisonByTask = new Map(evaluation?.comparison.tasks.map(task => [task.taskKey, task]) ?? [])
@@ -605,6 +609,8 @@ export function RefinementView({
                   <article className={css.direction} data-role={direction.role} key={direction.id}>
                     <div className={css.directionTop}>
                       <span className={css.pill}>{roleLabel(direction.role, t)}</span>
+                      {direction.running && <span className={css.pill}>{t(direction.rerunning ? 'status.rerunning' : 'status.evaluating')}</span>}
+                      {direction.score?.provisional === true && <span className={css.pill} data-tone="warning">{t('overview.provisional')}</span>}
                       {direction.failed && <span className={css.pill} data-tone="warning">{t('evaluation.failedEvidence')}</span>}
                       {direction.score?.key === bestCurrent?.key && <span className={css.pill} data-tone="best">{t('breakdown.best')}</span>}
                     </div>
@@ -617,7 +623,7 @@ export function RefinementView({
                       <span title={direction.score?.revision ?? direction.revision ?? direction.harnessRef}>
                         {t('overview.harnessVersion')}<strong>{shortVersion(direction.score?.revision ?? direction.revision ?? direction.harnessRef, t('unknown'))}</strong>
                       </span>
-                      <span>{t('breakdown.taskCoverage')}<strong>{direction.score === null ? '—' : `${direction.score.taskCount}/${display(direction.score.plannedTaskCount, t('unknown'))}`}</strong></span>
+                      <span>{t('breakdown.taskCoverage')}<strong>{direction.score === null ? '—' : `${direction.score.taskCount}/${display(direction.score.plannedTaskCount, '?')}`}</strong></span>
                       <span>{t('breakdown.validRuns')}<strong>{direction.score?.runCount ?? 0}</strong></span>
                     </div>
                   </article>

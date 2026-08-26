@@ -54,6 +54,7 @@ export function combinationScores(
     plannedTaskCounts: number[]
     durations: number[]
     runCount: number
+    running: boolean
   }>()
   for (const item of evaluation.evaluations) {
     if (item.ref.failedEvaluation !== undefined) continue
@@ -83,6 +84,7 @@ export function combinationScores(
         plannedTaskCounts: [],
         durations: [],
         runCount: 0,
+        running: false,
       }
       const rewards = group.tasks.get(run.taskKey) ?? []
       rewards.push(run.observation.reward)
@@ -92,6 +94,7 @@ export function combinationScores(
         group.durations.push(run.completedAt - run.startedAt)
       }
       group.runCount += 1
+      if (item.status === 'queued' || item.status === 'running' || item.status === 'rerunning') group.running = true
       groups.set(key, group)
     }
   }
@@ -118,7 +121,7 @@ export function combinationScores(
       taskCount: taskMeans.length,
       plannedTaskCount,
       runCount: group.runCount,
-      provisional: plannedTaskCount === null || taskMeans.length < plannedTaskCount,
+      provisional: group.running || plannedTaskCount === null || taskMeans.length < plannedTaskCount,
     }]
   }).sort((left, right) => Number(left.provisional) - Number(right.provisional)
     || right.mean - left.mean

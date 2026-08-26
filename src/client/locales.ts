@@ -35,7 +35,7 @@ export type RefinementKey =
   | 'trajectory.input' | 'trajectory.model' | 'trajectory.tools' | 'trajectory.kindTool'
   | 'trajectory.seq' | 'breakdown.best'
   | 'status.queued' | 'status.preparing' | 'status.evaluating' | 'status.settled'
-  | 'status.running' | 'status.awaitingReview' | 'status.completed' | 'status.succeeded'
+  | 'status.running' | 'status.rerunning' | 'status.awaitingReview' | 'status.completed' | 'status.succeeded'
   | 'status.failed' | 'status.timedOut' | 'status.cancelled' | 'status.corrupt'
   | 'status.pending' | 'status.regressed' | 'status.invalid' | 'status.improved'
   | 'status.unchanged' | 'status.valid' | 'status.missing'
@@ -100,7 +100,7 @@ export const en: Record<RefinementKey, string> = {
   'trajectory.toolbarCalls': 'Calls', 'trajectory.input': 'Input', 'trajectory.model': 'Model',
   'trajectory.tools': 'Tools', 'trajectory.kindTool': 'Tool', 'trajectory.seq': 'seq',
   'status.queued': 'Queued', 'status.preparing': 'Preparing', 'status.evaluating': 'Evaluating',
-  'status.settled': 'Settled', 'status.running': 'Running', 'status.awaitingReview': 'Awaiting review',
+  'status.settled': 'Settled', 'status.running': 'Running', 'status.rerunning': 'Rerunning', 'status.awaitingReview': 'Awaiting review',
   'status.completed': 'Completed', 'status.succeeded': 'Succeeded', 'status.failed': 'Failed',
   'status.timedOut': 'Timed out', 'status.cancelled': 'Cancelled', 'status.corrupt': 'Corrupt',
   'status.pending': 'Pending', 'status.regressed': 'Regressed', 'status.invalid': 'Invalid',
@@ -168,7 +168,7 @@ export const zh: Record<RefinementKey, string> = {
   'trajectory.toolbarCalls': '调用', 'trajectory.input': '输入', 'trajectory.model': '模型',
   'trajectory.tools': '工具', 'trajectory.kindTool': '工具', 'trajectory.seq': '序号',
   'status.queued': '排队中', 'status.preparing': '准备中', 'status.evaluating': '评测中',
-  'status.settled': '已结算', 'status.running': '运行中', 'status.awaitingReview': '等待审核',
+  'status.settled': '已结算', 'status.running': '运行中', 'status.rerunning': '重跑中', 'status.awaitingReview': '等待审核',
   'status.completed': '已完成', 'status.succeeded': '成功', 'status.failed': '失败',
   'status.timedOut': '已超时', 'status.cancelled': '已取消', 'status.corrupt': '数据损坏',
   'status.pending': '等待中', 'status.regressed': '回退', 'status.invalid': '无效',
