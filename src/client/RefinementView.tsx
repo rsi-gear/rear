@@ -16,7 +16,9 @@ import {
   BENCHMARK_REGRESSION_GUARDRAIL,
   benchmarkKey,
   benchmarkPortfolio,
+  benchmarkPortfolioCoverage,
   combinationScores,
+  overviewCombinationScores,
   type BenchmarkPortfolio,
 } from './benchmark-dashboard.ts'
 
@@ -196,32 +198,38 @@ function PortfolioDashboard({ portfolio, selectedBenchmarkKey, onSelectBenchmark
               </tr>
             </thead>
             <tbody>
-              {portfolio.rows.map(row => (
-                <tr key={row.candidateId} data-role={row.role}>
-                  <td className={css.taskIdentity}>
-                    <strong>{row.label}</strong>
-                    <span className={css.row}>
-                      <span className={css.pill}>{roleLabel(row.role, t)}</span>
-                      {row.pareto && <span className={css.pill} data-tone="best">{t('portfolio.pareto')}</span>}
-                    </span>
-                  </td>
-                  {row.cells.map(cell => (
-                    <td
-                      className={css.matrixCell}
-                      data-status={cell.status}
-                      data-guardrail={cell.guardrailViolation}
-                      key={cell.benchmark.key}
-                    >
-                      <strong className={css.matrixValue}>{formatScore(cell.score?.mean, '—')}</strong>
-                      <span className={css.matrixDelta}>{row.role === 'baseline' ? t('baseline') : formatDelta(cell.delta, '—')}</span>
+              {portfolio.rows.map((row) => {
+                const coverage = benchmarkPortfolioCoverage(row, portfolio.benchmarks.length)
+                return (
+                  <tr key={row.candidateId} data-role={row.role}>
+                    <td className={css.taskIdentity}>
+                      <strong>{row.label}</strong>
+                      <span className={css.row}>
+                        <span className={css.pill}>{roleLabel(row.role, t)}</span>
+                        {row.pareto && <span className={css.pill} data-tone="best">{t('portfolio.pareto')}</span>}
+                      </span>
                     </td>
-                  ))}
-                  <td className={css.taskScore}><strong>{formatScore(row.meanScore, '—')}</strong><span className={css.taskRuns}>{row.benchmarkCoverage}/{portfolio.benchmarks.length}</span></td>
-                  <td className={css.taskDelta} data-sign={row.meanDelta === null ? 'none' : row.meanDelta > 0 ? 'positive' : row.meanDelta < 0 ? 'negative' : 'neutral'}>
-                    {formatDelta(row.meanDelta, '—')}
-                  </td>
-                </tr>
-              ))}
+                    {row.cells.map(cell => (
+                      <td
+                        className={css.matrixCell}
+                        data-status={cell.status}
+                        data-guardrail={cell.guardrailViolation}
+                        key={cell.benchmark.key}
+                      >
+                        <strong className={css.matrixValue}>{formatScore(cell.score?.mean, '—')}</strong>
+                        <span className={css.matrixDelta}>{row.role === 'baseline' ? t('baseline') : formatDelta(cell.delta, '—')}</span>
+                      </td>
+                    ))}
+                    <td className={css.taskScore}>
+                      <strong>{formatScore(row.meanScore, '—')}</strong>
+                      <span className={css.taskRuns}>{coverage.completed}/{display(coverage.total, '?')}</span>
+                    </td>
+                    <td className={css.taskDelta} data-sign={row.meanDelta === null ? 'none' : row.meanDelta > 0 ? 'positive' : row.meanDelta < 0 ? 'negative' : 'neutral'}>
+                      {formatDelta(row.meanDelta, '—')}
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
@@ -361,17 +369,18 @@ export function RefinementView({
     ? state.evaluation
     : state.evaluationHistory[state.selectedIterationId] ?? state.evaluation
   const currentBenchmarkRef = selectedEvaluation?.evaluations[0]?.ref ?? selectedIteration?.evaluationRefs[0] ?? null
-  const overviewScores = state.selectedIterationId === null
-    ? []
-    : combinationScores(state.selectedIterationId, selectedEvaluation)
+  const overviewScores = overviewCombinationScores(detail?.iterations ?? [], state.evaluationHistory)
   const overviewPortfolio = benchmarkPortfolio(
     overviewScores,
     detail?.candidates ?? [],
     detail?.baselineCandidateId ?? null,
   )
   const bestPortfolioRow = overviewPortfolio.leadingRow
-  const best = overviewScores.find(score => score.candidateId === bestPortfolioRow?.candidateId) ?? null
+  const best = bestPortfolioRow?.cells.find(cell => cell.score !== null)?.score ?? null
   const bestCandidate = detail?.candidates.find(candidate => candidate.id === best?.candidateId) ?? null
+  const bestCoverage = bestPortfolioRow === null
+    ? null
+    : benchmarkPortfolioCoverage(bestPortfolioRow, overviewPortfolio.benchmarks.length)
 
   if (state.level === 'overview') {
     if (detail === null) return <main className={css.root}><div className={css.empty}>{t('loading')}</div></main>
@@ -447,7 +456,7 @@ export function RefinementView({
             <strong className={css.scoreValue}>{bestPortfolioRow === null ? '—' : formatScore(bestPortfolioRow.meanScore, t('unknown'))}</strong>
             {bestPortfolioRow !== null && (
               <span className={css.muted}>
-                {formatDelta(bestPortfolioRow.meanDelta, '—')} {t('portfolio.meanDelta')} · {bestPortfolioRow.benchmarkCoverage}/{overviewPortfolio.benchmarks.length}
+                {formatDelta(bestPortfolioRow.meanDelta, '—')} {t('portfolio.meanDelta')} · {bestCoverage?.completed}/{display(bestCoverage?.total, '?')}
               </span>
             )}
           </div>

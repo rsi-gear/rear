@@ -3,6 +3,7 @@ import type {
   RefinementCandidateRecord,
   RefinementEvaluationView,
   RefinementIterationId,
+  RefinementIterationRecord,
 } from '../types.ts'
 
 /** Raw reward decrease that fails the default per-benchmark guardrail. */
@@ -34,6 +35,19 @@ export function benchmarkKey(value: { readonly benchmarkId: string; readonly ben
   return `${value.benchmarkId}\u0000${value.benchmarkRevision}`
 }
 
+/** Remove protocol fields that describe a task fixture rather than the execution combination. */
+function aggregationProtocolIdentity(identity: string): string {
+  try {
+    const parsed: unknown = JSON.parse(identity)
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return identity
+    const protocol = { ...parsed as Record<string, unknown> }
+    delete protocol['initial_workspace_digest']
+    return JSON.stringify(protocol)
+  } catch {
+    return identity
+  }
+}
+
 /** Aggregate valid observations without allowing repeated attempts to overweight one task. */
 export function combinationScores(
   iterationId: RefinementIterationId,
@@ -61,6 +75,7 @@ export function combinationScores(
     for (const run of item.runs) {
       if (run.integrity !== 'valid' || run.observation.state !== 'valid') continue
       const modelId = run.model.effectiveId ?? run.model.requestedId
+      const protocolIdentity = aggregationProtocolIdentity(run.protocolIdentity)
       const key = [
         run.candidateId,
         item.ref.benchmarkId,
@@ -68,7 +83,7 @@ export function combinationScores(
         run.harness.id,
         run.harness.revisionIdentity ?? '',
         modelId,
-        run.protocolIdentity,
+        protocolIdentity,
       ].join('\u0000')
       const group = groups.get(key) ?? {
         candidateId: run.candidateId,
@@ -79,7 +94,7 @@ export function combinationScores(
         revision: run.harness.revisionIdentity,
         modelId,
         provider: run.model.provider,
-        protocolIdentity: run.protocolIdentity,
+        protocolIdentity,
         tasks: new Map<string, number[]>(),
         plannedTaskCounts: [],
         durations: [],
@@ -128,6 +143,14 @@ export function combinationScores(
     || right.taskCount - left.taskCount)
 }
 
+/** Collect every loaded iteration so the overview is not limited to the active round. */
+export function overviewCombinationScores(
+  iterations: readonly Pick<RefinementIterationRecord, 'id'>[],
+  evaluationHistory: Readonly<Record<string, RefinementEvaluationView>>,
+): readonly BenchmarkCombinationScore[] {
+  return iterations.flatMap(iteration => combinationScores(iteration.id, evaluationHistory[iteration.id] ?? null))
+}
+
 export interface BenchmarkColumn {
   readonly key: string
   readonly id: string
@@ -163,6 +186,23 @@ export interface BenchmarkPortfolio {
   readonly guardrailChecks: number
   readonly guardrailViolations: number
   readonly validRuns: number
+}
+
+export interface BenchmarkPortfolioCoverage {
+  readonly completed: number
+  readonly total: number | null
+}
+
+/** Show task coverage for one benchmark and benchmark coverage for a multi-benchmark portfolio. */
+export function benchmarkPortfolioCoverage(
+  row: BenchmarkPortfolioRow,
+  benchmarkCount: number,
+): BenchmarkPortfolioCoverage {
+  if (benchmarkCount === 1) {
+    const score = row.cells[0]?.score ?? null
+    return { completed: score?.taskCount ?? 0, total: score?.plannedTaskCount ?? null }
+  }
+  return { completed: row.benchmarkCoverage, total: benchmarkCount }
 }
 
 function paretoIds(rows: readonly Omit<BenchmarkPortfolioRow, 'pareto'>[]): ReadonlySet<RefinementCandidateId> {
@@ -253,7 +293,7 @@ export function benchmarkPortfolio(
   const rows = baseRows.map(row => ({ ...row, pareto: pareto.has(row.candidateId) }))
   const candidateCells = rows.flatMap(row => row.role === 'baseline' ? [] : row.cells)
   const comparableCells = candidateCells.filter(cell => cell.delta !== null)
-  const leadingRow = rows.filter(row => row.role !== 'baseline' && row.meanScore !== null)
+  const leadingRow = rows.filter(row => row.meanScore !== null)
     .sort((left, right) => (right.benchmarkCoverage - left.benchmarkCoverage)
       || ((right.meanScore ?? Number.NEGATIVE_INFINITY) - (left.meanScore ?? Number.NEGATIVE_INFINITY)))[0] ?? null
   return {

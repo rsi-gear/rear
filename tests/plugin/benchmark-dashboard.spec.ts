@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import {
   BENCHMARK_REGRESSION_GUARDRAIL,
   benchmarkPortfolio,
+  benchmarkPortfolioCoverage,
   combinationScores,
+  overviewCombinationScores,
   type BenchmarkCombinationScore,
 } from '../../src/client/benchmark-dashboard.ts'
 import type {
@@ -12,6 +14,7 @@ import type {
   RefinementCandidateRecord,
   RefinementEvaluationView,
   RefinementIterationId,
+  RefinementRunView,
 } from '../../src/types.ts'
 
 const iterationId = 'iteration-portfolio' as RefinementIterationId
@@ -55,6 +58,30 @@ function score(
     plannedTaskCount: 4,
     runCount: 4,
     provisional: false,
+  }
+}
+
+function validRun(taskId: string, reward: number, initialWorkspaceDigest: string): RefinementRunView {
+  return {
+    id: `run_${taskId.padEnd(32, '0')}` as HitchRunId,
+    evalId: 'eval_workspace_digest' as HitchEvalId,
+    candidateId: baselineId,
+    trialId: `trial-${taskId}`,
+    attempt: 1,
+    taskKey: `task-key-${taskId}`,
+    taskId,
+    execution: 'succeeded',
+    observation: { state: 'valid', reward },
+    integrity: 'valid',
+    harness: { requestedRef: 'harness', id: 'harness', revisionIdentity: 'revision' },
+    model: { requestedId: 'model', provider: 'test', effectiveId: 'model-snapshot' },
+    protocolIdentity: JSON.stringify({
+      environment_identity: 'environment',
+      initial_workspace_digest: initialWorkspaceDigest,
+      timeout_ms: 1_000,
+      workspace_mode: 'shared',
+    }),
+    trajectory: { availability: 'missing', hasCanonical: false, providerFileCount: 0 },
   }
 }
 
@@ -108,6 +135,105 @@ describe('benchmark portfolio dashboard', () => {
     }
 
     expect(combinationScores(iterationId, evaluation)).toEqual([])
+  })
+
+  it('does not split an equal-weight task mean by task-specific initial workspace digests', () => {
+    const runId = 'run_build-cython-ext000000000000000' as HitchRunId
+    const evaluation: RefinementEvaluationView = {
+      evidenceVersion: 'workspace-digests',
+      evaluations: [{
+        ref: {
+          providerId: 'hitch',
+          evalId: 'eval_workspace_digest' as HitchEvalId,
+          candidateId: baselineId,
+          requestedModelId: 'model',
+          benchmarkId: 'terminal-bench',
+          benchmarkRevision: '2.0',
+        },
+        status: 'succeeded',
+        plannedTasks: 5,
+        settledTasks: 5,
+        runs: [
+          validRun('build-cython-ext', 1, 'empty'),
+          validRun('chess-best-move', 1, 'chess'),
+          validRun('configure-git-webserver', 0, 'empty'),
+          validRun('fix-code-vulnerability', 1, 'security'),
+          validRun('polyglot-c-py', 0, 'empty'),
+        ],
+        diagnostics: [],
+      }],
+      comparison: {
+        strict: false,
+        dimension: 'harness',
+        referenceRunId: runId,
+        exclusions: [],
+        tasks: [],
+      },
+    }
+
+    const scores = combinationScores(iterationId, evaluation)
+    expect(scores).toHaveLength(1)
+    expect(scores[0]).toMatchObject({ taskCount: 5, plannedTaskCount: 5, provisional: false })
+    expect(scores[0]?.mean).toBeCloseTo(0.6)
+
+    const portfolio = benchmarkPortfolio(scores, [candidate(baselineId, 'baseline', 1)], baselineId)
+    expect(portfolio.leadingRow?.candidateId).toBe(baselineId)
+    expect(portfolio.leadingRow?.meanScore).toBeCloseTo(0.6)
+    expect(benchmarkPortfolioCoverage(portfolio.leadingRow!, portfolio.benchmarks.length)).toEqual({
+      completed: 5,
+      total: 5,
+    })
+  })
+
+  it('keeps a completed iteration on the overview while the active iteration is provisional', () => {
+    const completedIterationId = 'iteration-completed' as RefinementIterationId
+    const activeIterationId = 'iteration-active' as RefinementIterationId
+    const completed: RefinementEvaluationView = {
+      evidenceVersion: 'completed',
+      evaluations: [{
+        ref: {
+          providerId: 'hitch', evalId: 'eval_workspace_digest' as HitchEvalId, candidateId: baselineId,
+          requestedModelId: 'model', benchmarkId: 'terminal-bench', benchmarkRevision: '2.0',
+        },
+        status: 'succeeded',
+        plannedTasks: 5,
+        settledTasks: 5,
+        runs: [
+          validRun('build-cython-ext', 1, 'empty'),
+          validRun('chess-best-move', 1, 'chess'),
+          validRun('configure-git-webserver', 0, 'empty'),
+          validRun('fix-code-vulnerability', 1, 'security'),
+          validRun('polyglot-c-py', 0, 'empty'),
+        ],
+        diagnostics: [],
+      }],
+      comparison: { strict: false, dimension: 'harness', referenceRunId: null, exclusions: [], tasks: [] },
+    }
+    const active: RefinementEvaluationView = {
+      ...completed,
+      evidenceVersion: 'active',
+      evaluations: [{
+        ...completed.evaluations[0]!,
+        status: 'running',
+        settledTasks: 1,
+        runs: [validRun('polyglot-c-py', 0, 'empty')],
+      }],
+    }
+
+    const scores = overviewCombinationScores([
+      { id: completedIterationId },
+      { id: activeIterationId },
+    ], {
+      [completedIterationId]: completed,
+      [activeIterationId]: active,
+    })
+    const portfolio = benchmarkPortfolio(scores, [candidate(baselineId, 'baseline', 1)], baselineId)
+    expect(scores).toHaveLength(2)
+    expect(portfolio.leadingRow?.meanScore).toBeCloseTo(0.6)
+    expect(benchmarkPortfolioCoverage(portfolio.leadingRow!, portfolio.benchmarks.length)).toEqual({
+      completed: 5,
+      total: 5,
+    })
   })
 
   it('computes baseline deltas, regression guardrails, and the Pareto frontier', () => {
