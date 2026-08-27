@@ -31,9 +31,11 @@ function canonical(runId: string): string {
     { type: 'session', version: 0, id: `session-${runId}`, createdAt: now },
     { type: 'turn/start', seq: 0, time: now, data: { turn: 1 } },
     { type: 'step/start', seq: 1, time: now + 1, data: { turn: 1, step: 1 } },
-    { type: 'assistant/message', seq: 2, time: now + 2, data: { turn: 1, step: 1, message: { content: [{ type: 'text', text: 'done' }], source: { provider: 'test', model: 'model' } }, usage: { inputTokens: 7, outputTokens: 3 } } },
-    { type: 'step/end', seq: 3, time: now + 3, data: { turn: 1, step: 1 } },
-    { type: 'turn/end', seq: 4, time: now + 4, data: { turn: 1, reason: { kind: 'completed' } } },
+    { type: 'assistant/chunk', seq: 2, time: now + 2, data: { turn: 1, step: 1, chunk: { type: 'block-start', index: 0, blockType: 'text' } } },
+    { type: 'assistant/chunk', seq: 3, time: now + 3, data: { turn: 1, step: 1, chunk: { type: 'text-delta', index: 0, text: 'done' } } },
+    { type: 'assistant/message', seq: 4, time: now + 4, data: { turn: 1, step: 1, message: { content: [{ type: 'text', text: 'done' }], source: { provider: 'test', model: 'model' } }, usage: { inputTokens: 7, outputTokens: 3 } } },
+    { type: 'step/end', seq: 5, time: now + 5, data: { turn: 1, step: 1 } },
+    { type: 'turn/end', seq: 6, time: now + 6, data: { turn: 1, reason: { kind: 'completed' } } },
   ].map(value => JSON.stringify(value)).join('\n') + '\n'
 }
 
@@ -145,8 +147,9 @@ describe('HitchRefinementEvidenceProvider', () => {
     expect(projection.runs.map(item => item.trajectory.availability)).toEqual(['available', 'provider-only', 'missing'])
     expect(projection.runs[0]?.observation).toEqual({ state: 'valid', reward: 0 })
     expect(projection.runs[1]?.observation).toEqual({ state: 'invalid', reason: 'infrastructure' })
+    expect(projection.runs[0]?.trajectory.summary?.ttftMs).toBe(2)
     const document = await provider.trajectory({ evalRef: ref(evalId, candidateId), runId: fixtures[0]?.runId as HitchRunId })
-    expect(document.events).toHaveLength(5)
+    expect(document.events).toHaveLength(7)
     const page = await provider.providerEvidence({
       evalRef: ref(evalId, candidateId),
       runId: fixtures[1]?.runId as HitchRunId,

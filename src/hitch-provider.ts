@@ -256,7 +256,12 @@ function trajectorySummary(bytes: Buffer): RefinementRunView['trajectory']['summ
   let firstToken: number | undefined
   for (const event of events) {
     if (event.type === 'step/start' && firstStep === undefined) firstStep = event.time
-    if (event.type === 'assistant/chunk' && firstToken === undefined) firstToken = event.time
+    if (event.type === 'assistant/chunk' && firstToken === undefined) {
+      const chunk = object(object(event.data, 'assistant chunk data')['chunk'], 'assistant chunk')
+      if (chunk['type'] === 'text-delta' || chunk['type'] === 'reasoning-delta' || chunk['type'] === 'tool-call-delta') {
+        firstToken = event.time
+      }
+    }
     if (event.type !== 'assistant/message') continue
     const usage = object(event.data, 'assistant message data')['usage']
     if (usage === undefined) continue
