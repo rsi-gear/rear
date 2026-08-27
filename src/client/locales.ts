@@ -23,17 +23,7 @@ export type RefinementKey =
   | 'comparison.chooseRuns' | 'comparison.chooseHint' | 'comparison.reward'
   | 'comparison.duration' | 'comparison.tools' | 'comparison.tokens' | 'comparison.ttft'
   | 'comparison.eval' | 'comparison.trial' | 'comparison.protocol' | 'comparison.invalid'
-  | 'trajectory.session' | 'trajectory.events' | 'trajectory.timeMode'
-  | 'trajectory.clock' | 'trajectory.relative' | 'trajectory.empty'
-  | 'trajectory.assistant' | 'trajectory.toolCall' | 'trajectory.toolResult'
-  | 'trajectory.lifecycle' | 'trajectory.event' | 'trajectory.turn'
-  | 'trajectory.step' | 'trajectory.details'
-  | 'trajectory.toolbar' | 'trajectory.timeline' | 'trajectory.durationHint'
-  | 'trajectory.turnsHint' | 'trajectory.callsHint' | 'trajectory.search'
-  | 'trajectory.searchPlaceholder' | 'trajectory.noMatches' | 'trajectory.closeDetails'
-  | 'trajectory.toolbarDuration' | 'trajectory.toolbarTurns' | 'trajectory.toolbarCalls'
-  | 'trajectory.input' | 'trajectory.model' | 'trajectory.tools' | 'trajectory.kindTool'
-  | 'trajectory.seq' | 'breakdown.best'
+  | 'trajectory.empty' | 'breakdown.best'
   | 'status.queued' | 'status.preparing' | 'status.evaluating' | 'status.settled'
   | 'status.running' | 'status.rerunning' | 'status.awaitingReview' | 'status.completed' | 'status.succeeded'
   | 'status.failed' | 'status.timedOut' | 'status.cancelled' | 'status.corrupt'
@@ -84,21 +74,7 @@ export const en: Record<RefinementKey, string> = {
   'comparison.tokens': 'Tokens', 'comparison.ttft': 'TTFT',
   'comparison.eval': 'Eval', 'comparison.trial': 'Trial', 'comparison.protocol': 'Protocol',
   'comparison.invalid': 'Invalid',
-  'trajectory.session': 'Persisted session', 'trajectory.events': 'events',
-  'trajectory.timeMode': 'Timeline time mode', 'trajectory.clock': 'Clock',
-  'trajectory.relative': 'Elapsed', 'trajectory.empty': 'No canonical trajectory events',
-  'trajectory.assistant': 'Assistant', 'trajectory.toolCall': 'Tool call',
-  'trajectory.toolResult': 'Tool result', 'trajectory.lifecycle': 'Lifecycle',
-  'trajectory.event': 'Event', 'trajectory.turn': 'Turn', 'trajectory.step': 'Step',
-  'trajectory.details': 'event JSON',
-  'trajectory.toolbar': 'Trajectory toolbar', 'trajectory.timeline': 'Trajectory timeline',
-  'trajectory.durationHint': 'Use actual duration', 'trajectory.turnsHint': 'Collapse turns',
-  'trajectory.callsHint': 'Collapse calls', 'trajectory.search': 'Search trajectory',
-  'trajectory.searchPlaceholder': 'Search', 'trajectory.noMatches': 'No matching trajectory records',
-  'trajectory.closeDetails': 'Close details',
-  'trajectory.toolbarDuration': 'Duration', 'trajectory.toolbarTurns': 'Turns',
-  'trajectory.toolbarCalls': 'Calls', 'trajectory.input': 'Input', 'trajectory.model': 'Model',
-  'trajectory.tools': 'Tools', 'trajectory.kindTool': 'Tool', 'trajectory.seq': 'seq',
+  'trajectory.empty': 'No canonical trajectory events',
   'status.queued': 'Queued', 'status.preparing': 'Preparing', 'status.evaluating': 'Evaluating',
   'status.settled': 'Settled', 'status.running': 'Running', 'status.rerunning': 'Rerunning', 'status.awaitingReview': 'Awaiting review',
   'status.completed': 'Completed', 'status.succeeded': 'Succeeded', 'status.failed': 'Failed',
@@ -152,21 +128,7 @@ export const zh: Record<RefinementKey, string> = {
   'comparison.tokens': 'Token', 'comparison.ttft': '首 Token 延迟',
   'comparison.eval': '评测', 'comparison.trial': '试验', 'comparison.protocol': '协议',
   'comparison.invalid': '无效',
-  'trajectory.session': '持久化会话', 'trajectory.events': '个事件',
-  'trajectory.timeMode': '时间轴显示方式', 'trajectory.clock': '时钟',
-  'trajectory.relative': '相对时间', 'trajectory.empty': '没有可显示的规范化轨迹事件',
-  'trajectory.assistant': '助手', 'trajectory.toolCall': '工具调用',
-  'trajectory.toolResult': '工具结果', 'trajectory.lifecycle': '生命周期',
-  'trajectory.event': '事件', 'trajectory.turn': '轮次', 'trajectory.step': '步骤',
-  'trajectory.details': '事件 JSON',
-  'trajectory.toolbar': '轨迹工具栏', 'trajectory.timeline': '轨迹时间线',
-  'trajectory.durationHint': '使用实际耗时', 'trajectory.turnsHint': '折叠轮次',
-  'trajectory.callsHint': '折叠调用', 'trajectory.search': '搜索轨迹',
-  'trajectory.searchPlaceholder': '搜索', 'trajectory.noMatches': '没有匹配的轨迹记录',
-  'trajectory.closeDetails': '关闭详情',
-  'trajectory.toolbarDuration': '耗时', 'trajectory.toolbarTurns': '轮次',
-  'trajectory.toolbarCalls': '调用', 'trajectory.input': '输入', 'trajectory.model': '模型',
-  'trajectory.tools': '工具', 'trajectory.kindTool': '工具', 'trajectory.seq': '序号',
+  'trajectory.empty': '没有可显示的规范化轨迹事件',
   'status.queued': '排队中', 'status.preparing': '准备中', 'status.evaluating': '评测中',
   'status.settled': '已结算', 'status.running': '运行中', 'status.rerunning': '重跑中', 'status.awaitingReview': '等待审核',
   'status.completed': '已完成', 'status.succeeded': '成功', 'status.failed': '失败',

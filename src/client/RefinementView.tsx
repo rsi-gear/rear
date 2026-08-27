@@ -8,7 +8,10 @@ import type {
 } from '../types.ts'
 import type { RefinementController } from './controller.ts'
 import { en, type RefinementKey } from './locales.ts'
-import { OfflineTrajectorySurface } from './OfflineTrajectorySurface.tsx'
+import {
+  DshOfflineTrajectorySurface,
+  type DshTrajectoryBridge,
+} from './DshOfflineTrajectorySurface.tsx'
 import {
   BENCHMARK_REGRESSION_GUARDRAIL,
   benchmarkKey,
@@ -67,6 +70,7 @@ export interface RefinementInjected {
   loadProviderEvidence: RefinementController['loadProviderEvidence']
   closeProviderEvidence: RefinementController['closeProviderEvidence']
   closeDetails: () => void
+  dshTrajectory: DshTrajectoryBridge
 }
 
 type ViewProps = ConvViewProps & InjectFace<RefinementInjected> & PropsLocale<'refinement'>
@@ -255,12 +259,13 @@ function PortfolioDashboard({ portfolio, selectedBenchmarkKey, onSelectBenchmark
   )
 }
 
-function TrajectoryLane({ run, document, loadRaw, closeRaw, raw }: {
+function TrajectoryLane({ run, document, loadRaw, closeRaw, raw, dshTrajectory }: {
   readonly run: RefinementRunView
   readonly document: ReturnType<RefinementController['getSnapshot']>['trajectories'][string] | undefined
   readonly loadRaw: (cursor: string | null) => void
   readonly closeRaw: () => void
   readonly raw: RefinementProviderEvidencePage | null
+  readonly dshTrajectory: DshTrajectoryBridge
 }) {
   const observation = run.observation.state === 'valid'
     ? String(run.observation.reward)
@@ -315,9 +320,9 @@ function TrajectoryLane({ run, document, loadRaw, closeRaw, raw }: {
           ? <div className={css.empty}>{ENGLISH_T('loading')}</div>
           : document === null
             ? <div className={css.empty}>{run.trajectory.availability} · {ENGLISH_T('trajectory.empty')}</div>
-            : <OfflineTrajectorySurface
+            : <DshOfflineTrajectorySurface
+                bridge={dshTrajectory}
                 document={document}
-                t={ENGLISH_T}
               />}
       </div>
     </section>
@@ -327,7 +332,7 @@ function TrajectoryLane({ run, document, loadRaw, closeRaw, raw }: {
 /** Always-present Refine conversation view with overview, evaluation, and comparison levels. */
 export function RefinementView({
   useRefinement, ensure, selectRefinement, selectIteration, setComparisonDimension, openTask, selectRuns, back,
-  loadProviderEvidence, closeProviderEvidence, closeDetails, t,
+  loadProviderEvidence, closeProviderEvidence, closeDetails, dshTrajectory, t,
 }: ViewProps) {
   const state = useRefinement(value => value)
   const [taskFilter, setTaskFilter] = useState<'all' | 'improved' | 'regressed' | 'unchanged'>('all')
@@ -765,6 +770,7 @@ export function RefinementView({
           return (
             <TrajectoryLane
               key={runId}
+              dshTrajectory={dshTrajectory}
               run={run}
               document={state.trajectories[runId]}
               loadRaw={(cursor) => { void loadProviderEvidence(runId, 0, cursor) }}

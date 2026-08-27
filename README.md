@@ -28,6 +28,8 @@ Rear reads `gear.root/registry.json` and `gear.root/evolutions/<evolutionId>/rou
 
 Rear never guesses a run path from a `/refine` response. Gear state supplies the authoritative experiment-to-evaluation association; Hitch supplies the authoritative evaluation-to-trajectory association.
 
+Canonical run events are projected by DSH's registered `ConversationNodeAssembler` definitions and rendered by the native `trajectory` conversation-view component. Rear supplies only a read-only offline Session snapshot per comparison lane; it does not maintain a second trajectory layout, timeline, table, inspector, search, folding, or virtualization implementation.
+
 ## Configuration
 
 The bundled Loader row is dormant. Enable it and provide explicit state roots and limits:

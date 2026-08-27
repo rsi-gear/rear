@@ -1,6 +1,11 @@
 /** Browser refinement workbench plugin and its reusable controller. */
 import type { Context } from '@deepseek-ai/cordis'
-import type { SessionId } from '@deepseek-ai/dsh-client-runtime/client'
+import {
+  ConversationNodeAssembler,
+  EMPTY_CHAT_SNAPSHOT,
+  type ConversationSnapshot,
+  type SessionId,
+} from '@deepseek-ai/dsh-client-runtime/client'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
@@ -8,6 +13,12 @@ import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-trajectory/client'
 import { RefinementController, type RefinementRemoteClient } from './controller.ts'
 import { RefinementView, type RefinementInjected } from './RefinementView.tsx'
+import {
+  canonicalTrajectoryInputs,
+  resolveDshTrajectoryComponent,
+  type DshTrajectoryBridge,
+} from './DshOfflineTrajectorySurface.tsx'
+import type { CanonicalTrajectoryDocument } from '../types.ts'
 import { en, zh } from './locales.ts'
 import { mountStyles } from './styles.ts'
 
@@ -20,6 +31,7 @@ const NS = 'refinement'
 /** Services required by the read-only refinement view and controller directory. */
 export const inject = [
   'slots', 'sessions', 'connection', 'locale', 'layout',
+  'conversationEvents', 'conversationViews',
 ]
 
 function abortError(): Error {
@@ -52,6 +64,48 @@ export function apply(ctx: Context): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-refinement: dictionaries')
   const remote = remoteAdapter(ctx)
   const controllers = new Map<SessionId, RefinementController>()
+  let trajectoryBridge: DshTrajectoryBridge | undefined
+  const dshTrajectory = (): DshTrajectoryBridge => {
+    trajectoryBridge ??= {
+      component: resolveDshTrajectoryComponent(ctx.slots.entries('conversation.view')),
+      project: (document: CanonicalTrajectoryDocument): ConversationSnapshot => {
+        const assembler = new ConversationNodeAssembler(
+          ctx.conversationEvents,
+          ctx.conversationViews,
+        )
+        assembler.replaceWindow(canonicalTrajectoryInputs(document), false)
+        assembler.flush()
+        if (assembler.snapshot('trajectory') === undefined) {
+          throw new Error('DSH trajectory snapshot builder is not registered')
+        }
+        return {
+          sessionId: document.header.id as unknown as SessionId,
+          views: assembler,
+          chat: EMPTY_CHAT_SNAPSHOT,
+          nodes: [],
+          turnTimings: new Map(),
+          turnEnds: new Map(),
+          partial: null,
+          runningCalls: [],
+          pending: [],
+          queue: [],
+          running: false,
+          subagent: null,
+          composerPhase: 'active',
+          removed: false,
+          openState: 'open',
+          openError: null,
+          loadingOlder: false,
+          hasMore: false,
+          promptError: null,
+          blank: false,
+          lastAgentError: null,
+        }
+      },
+      t: ctx.locale.bind('trajectory') as (key: string) => string,
+    }
+    return trajectoryBridge
+  }
   const controllerFor = (sessionId: SessionId): RefinementController => {
     let controller = controllers.get(sessionId)
     if (controller === undefined) {
@@ -74,6 +128,7 @@ export function apply(ctx: Context): void {
       loadProviderEvidence: (runId, fileOrdinal, cursor) => controller.loadProviderEvidence(runId, fileOrdinal, cursor),
       closeProviderEvidence: runId => { controller.closeProviderEvidence(runId) },
       closeDetails: () => { ctx.layout.closeDetails() },
+      dshTrajectory: dshTrajectory(),
     }
   }
 

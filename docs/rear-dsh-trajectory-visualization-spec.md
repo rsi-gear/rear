@@ -4,7 +4,7 @@
 - 日期：2026-08-21
 - REAR 基线：`35a2c21207c1838f3227c5fe0ef8d81917e5c2d9`
 - DSH 基线：`deepseek-harness@99f6f02fecdb7dff40c3fbc9470f5907c29f74ca`
-- DSH 包：`packages/client/ui-trajectory@0.1.0-rc.7`
+- DSH 包：`@deepseek-ai/dsh-client-ui-trajectory@0.1.1-rc.2`
 - 数据契约：RunRecord V1、TrajectoryRef V2、canonical DSH session version 0
 
 ## 1. 结论
@@ -295,52 +295,34 @@ Assistant Summary 必须展示 rendered output、可折叠 Thinking、tool-call 
 - Provider Evidence 仍使用现有 REAR panel，不套 DSH trajectory UI。
 - canonical 为 missing/pending/raw_only/corrupt/unsupported 时，在 lane 内显示 REAR empty state，不创建假的 DSH records。
 
-## 13. 源码移植策略
+## 13. DSH 原生运行时桥接策略
 
-不得依赖发布包 `@deepseek-ai/dsh-client-ui-trajectory`，因为它要求 Cordis、DSH runtime、locale/slot 和 conversation shell。采用固定 commit 的源码移植：
+REAR 必须依赖并注入 `@deepseek-ai/dsh-client-ui-trajectory`，不复制其布局、timeline、table、inspector、搜索、折叠或虚拟列表源码。
 
-```text
-app/trajectory/dsh/
-  TrajectoryView.tsx
-  TrajectoryToolbar.tsx
-  TrajectoryTimeline.tsx
-  TrajectoryTable.tsx
-  layout.ts
-  timeline.ts
-  trajectory-record.ts
-  trajectory-search-index.ts
-  trajectory-virtual-rows.ts
-  *.module.css
-```
-
-要求：
-
-- 尽量保留 DSH 文件名、函数名、常量值和测试描述，便于后续与 upstream diff。
-- 在目录 README 中记录 upstream repo、commit、package version、MIT license 和本地差异白名单。
-- 复制 DSH dark-theme 所需 token 子集到该 surface 的 scoped token 文件，不把颜色改写成 REAR `--accent`。
-- primitives 放在 `app/trajectory/dsh/primitives/`，禁止把展示逻辑重新塞回 `app/rear-dashboard.tsx`。
+- 从 `conversation.view` slot ledger 解析 `id=trajectory` 的原生组件；缺失时 fail loud。
+- 使用 `ConversationNodeAssembler(ctx.conversationEvents, ctx.conversationViews)` 处理 Hitch canonical events，使事件定义、配对、prompt、timing、request 和 snapshot builder 与当前 DSH 运行时完全相同。
+- 每条 REAR lane 只提供一个只读的最小 Session snapshot hook，`hasMore=false`，不得向真实 DSH session catalog 注入伪造会话。
+- Duration、搜索、折叠、timeline range、selection 和 inspector 状态由每个原生 `TrajectoryView` 实例自行维护，不跨 lane 共享。
+- REAR 只维护 canonical envelope 传递、lane 尺寸和 Provider Evidence 外壳。升级 DSH 后通过 bridge/integration tests 验证 slot id 与 snapshot contract；不得在 REAR 中复制新增行为。
 
 ## 14. 文件级改动
 
 | 文件 | 修改 |
 | --- | --- |
-| `lib/hitch-types.ts` | 删除 `CanonicalLedgerRecord`；canonical detail 改为 header + summary + events；增加最小 DSH adapter types。 |
-| `lib/hitch/canonical-session.ts` | 保留 raw validated events；删除 `projectLedger`；修正 Assistant TTFT 为 step-start 语义。 |
-| `lib/hitch/trajectory-detail.ts` | 返回新的 canonical document，ETag 行为不变。 |
-| `app/rear-dashboard.tsx` | 删除 `EventCard` 和 canonical event filters；挂载 `TrajectoryCompare`。 |
-| `app/trajectory/TrajectoryCompare.tsx` | REAR lane header、empty state、同步滚动和 DSH surface 编排。 |
-| `app/trajectory/dsh/*` | 固定 DSH commit 的 UI、layout、timeline、search、virtualization 源码移植。 |
-| `app/trajectory/dsh-adapter.ts` | Session events -> DSH snapshot 的纯投影。 |
-| `app/trajectory/dsh-theme.css` | DSH dark theme token 子集，限定在 trajectory surface。 |
-| `app/globals.css` | 删除 `.event-card` 路径样式，只保留 compare outer shell。 |
-| `package.json` | 增加 `@tanstack/react-virtual` 和 prompt diff 所需 `diff`。 |
-| `tests/trajectory/*` | adapter/layout/timeline/table/inspector parity tests 与 fixtures。 |
+| `src/types.ts` | canonical detail 保留 Session header + raw validated events。 |
+| `src/hitch-provider.ts` | 校验 canonical document；summary TTFT 使用真正的首 token delta。 |
+| `src/client/RefinementView.tsx` | REAR lane header、empty state、Provider Evidence 和 DSH surface 编排。 |
+| `src/client/DshOfflineTrajectorySurface.tsx` | 原生 slot component bridge 与只读 Session selector。 |
+| `src/client/index.ts` | 使用 DSH registry/assembler 投影 canonical events，并注入 bridge。 |
+| `src/client/styles.ts` | 只保留 lane 尺寸/隔离；轨迹内部样式由 DSH 包提供。 |
+| `tests/plugin/offline-trajectory.spec.ts` | slot component 解析和 canonical envelope 无损转交测试。 |
+| `tests/plugin/package-bundle.spec.ts` | assembler 依赖、原生 bridge 和旧 renderer 缺席断言。 |
 
 ## 15. 测试要求
 
 ### 15.1 Adapter parity
 
-使用同一 session fixture 对比 DSH 基线投影与 REAR adapter：
+使用同一 session fixture 验证 canonical envelope 原样交给 DSH assembler：
 
 - 多 Turn、多 Step、steering input。
 - initial/update request header、prompt/tool catalog、request config。
@@ -349,20 +331,16 @@ app/trajectory/dsh/
 - 缺失 chunk/usage/timing 时的 unknown 语义。
 - unknown ignorable 与 unknown required event。
 
-必须断言 Turn、group、record kind、stable id、content、duration、usage、request number 和 error state 一致。
+REAR 不再生成 Turn、group 或 record；这些输出必须来自注册的 DSH snapshot builder。集成测试断言真实 run 的 node、request、call schema 数量及关键身份。
 
 ### 15.2 组件 parity
 
-从 DSH `ui-trajectory/tests` 移植与 P0 事件集有关的测试，至少覆盖：
+Toolbar、折叠、搜索、timeline、inspector 和 virtualization 的行为测试由 DSH `ui-trajectory` 包拥有，REAR 不复制。REAR 集成测试至少覆盖：
 
-- toolbar 顺序和 local state。
-- Turn/Calls 单个及全局折叠。
-- 搜索 AND 语义、清空恢复、timeline dimming。
-- timeline drag/click/zoom/pan/reset/tooltip。
-- row 与 Request marker selection。
-- inspector tabs、resize、parent/call navigation。
-- >100 rows virtualization、stable ARIA index 和 tail follow。
-- running 与 error 状态不覆盖 role。
+- `conversation.view` 中可解析唯一的 `id=trajectory` 原生组件。
+- bridge 缺失组件或 snapshot builder 时 fail loud。
+- 1–4 lane 各自持有独立的 duration/search/fold/timeline/selection/inspector 状态。
+- bundle 不包含旧 REAR trajectory table/inspector 实现。
 
 ### 15.3 Visual regression
 
@@ -389,7 +367,7 @@ app/trajectory/dsh/
 2. lane 内依次出现 DSH toolbar、`Input / Model / Tools` timeline 和 30px dense ledger。
 3. Tool call/result 是同一 row，显示 `args → result`；失败仍是 TOOL role，同时具有 error 状态。
 4. Assistant chunks 不单独成行；同一 step 只产生一个 Assistant lifecycle row。
-5. Turn、Request marker、折叠 summary、搜索和 timeline focus 行为通过从 DSH 移植的 parity tests。
+5. Turn、Request marker、折叠 summary、搜索和 timeline focus 直接由 DSH 原生组件提供，并通过 DSH upstream tests 与 REAR bridge tests。
 6. 点击 row 在该 lane 内打开可调宽 inspector；不存在 Compare 级共享 drawer。
 7. Inspector tabs、字段缺失文案、Markdown/JSON/image 展示与 DSH 基线一致。
 8. TTFT 使用 step start 到 first token；无 chunk 时显示 unknown，不显示 `0ms`。
@@ -400,10 +378,8 @@ app/trajectory/dsh/
 
 ## 17. 实施顺序
 
-1. 用 raw validated events 替换扁平 `CanonicalLedgerRecord[]` response。
-2. 移植 DSH event definitions/snapshot/layout，并完成 adapter parity tests。
-3. 移植 Toolbar、Timeline、Table、Inspector、tokens 和 primitives。
-4. 在 Compare 中替换 EventCard 路径，接入 lane-local state 与 ledger-only 同步滚动。
-5. 移植 DSH 组件 tests，补 visual regression 和 1/2/4 lane 回归。
-
-完成第 2 步之前不得先做“看起来像 DSH”的临时卡片样式；该临时实现不会进入主分支。
+1. canonical endpoint 返回 raw validated Session events。
+2. 确认 DSH trajectory 包作为 REAR client 的强依赖先于 REAR 注册。
+3. 用 DSH registry + `ConversationNodeAssembler` 生成离线 snapshot。
+4. 从 `conversation.view` slot ledger 解析并渲染原生 `TrajectoryView`。
+5. 删除旧 renderer、样式和本地行为测试，补 bridge/integration/visual regression。

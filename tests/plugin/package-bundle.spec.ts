@@ -35,8 +35,12 @@ describe('published DSH bundle', () => {
     const bundle = await readFile(resolve(root, 'lib/client.js'), 'utf8')
     expect(bundle).toContain('window.__ModuleLoader__.load({')
     expect(bundle).toContain('id: "dsh-plugin-rear"')
+    expect(bundle).toContain('ConversationNodeAssembler')
+    expect(bundle).toContain('REAR requires the registered DSH trajectory conversation view')
+    expect(bundle).not.toContain('rear-refinement-native-table')
     const requires = [...bundle.matchAll(/require\("([^"]+)"\)/gu)].map(match => match[1]).sort()
     expect([...new Set(requires)]).toEqual([
+      '@deepseek-ai/dsh-client-runtime/client',
       'react',
       'react/jsx-runtime',
     ])

@@ -125,10 +125,13 @@ describe('HitchRefinementEvidenceProvider', () => {
     const changed = vi.fn()
     const evalId = 'eval_early_watch' as HitchEvalId
     const dispose = provider.watchEval(evalId, changed)
+    // macOS FSEvents can acknowledge a newly-created watcher asynchronously;
+    // let the watch settle before exercising the create-directory edge.
+    await new Promise(resolve => setTimeout(resolve, 50))
     await json(join(root, 'evals', evalId, 'request.json'), { benchmark_id: 'bench', benchmark_revision: 'rev' })
-    await vi.waitFor(() => { expect(changed).toHaveBeenCalled() }, { timeout: 5_000 })
+    await vi.waitFor(() => { expect(changed).toHaveBeenCalled() }, { timeout: 10_000 })
     dispose()
-  })
+  }, 15_000)
 
   it('preserves attempts, invalid observations, and canonical/provider-only availability', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-hitch-provider-'))
