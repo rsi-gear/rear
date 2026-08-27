@@ -153,7 +153,7 @@ export const REFINEMENT_STYLES = `
 .rear-refinement-lane-header .rear-refinement-facts{margin:0}
 .rear-refinement-lane-header .rear-refinement-fact{min-height:30px;padding:0 12px}
 .rear-refinement-lane-body{min-height:300px;max-height:calc(100vh - 300px);overflow:auto}
-.rear-refinement-dsh-trajectory{--dsh-composer-height:0px;box-sizing:border-box;height:clamp(480px,calc(100vh - 360px),720px);min-height:480px;overflow:hidden;color:var(--dsw-alias-label-primary,var(--rear-text));background:var(--dsw-alias-bg-layer-1,var(--rear-panel))}
+.rear-refinement-dsh-trajectory{box-sizing:border-box;height:clamp(480px,calc(100vh - 360px),720px);min-height:480px;overflow:hidden;color:var(--dsw-alias-label-primary,var(--rear-text));background:var(--dsw-alias-bg-layer-1,var(--rear-panel))}
 .rear-refinement-card{padding:14px;border:1px solid var(--rear-line);border-radius:8px;background:rgba(255,255,255,.025)}
 .rear-refinement-raw{max-height:60vh;margin:0;padding:12px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
 .rear-refinement-root button{padding:6px 10px;border:1px solid var(--rear-line);border-radius:7px;color:inherit;background:rgba(255,255,255,.035);font:inherit;cursor:pointer;transition:border-color .16s,background .16s,transform .16s}

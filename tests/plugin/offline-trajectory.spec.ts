@@ -4,6 +4,7 @@ import {
   canonicalTrajectoryInputs,
   resolveDshTrajectoryComponent,
 } from '../../src/client/DshOfflineTrajectorySurface.tsx'
+import { REFINEMENT_STYLES } from '../../src/client/styles.ts'
 
 function document(): CanonicalTrajectoryDocument {
   return {
@@ -35,6 +36,12 @@ describe('DSH offline trajectory bridge', () => {
     expect(inputs[0]?.event).toBe(source.events[0])
     expect(inputs[1]?.event).toBe(source.events[1])
     expect(inputs.map(input => input.view)).toEqual([undefined, undefined])
+  })
+
+  it('inherits the live DSH composer height so the ledger can scroll above its overlay', () => {
+    const trajectoryRule = REFINEMENT_STYLES.match(/\.rear-refinement-dsh-trajectory\{([^}]*)\}/u)?.[1]
+    expect(trajectoryRule).toBeDefined()
+    expect(trajectoryRule).not.toContain('--dsh-composer-height')
   })
 
 })
