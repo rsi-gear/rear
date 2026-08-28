@@ -6,7 +6,12 @@ import type {
   ConversationEventInput,
   ConversationSnapshot,
 } from '@deepseek-ai/dsh-client-runtime/client'
-import type { CanonicalTrajectoryDocument } from '../types.ts'
+import type {
+  CanonicalTrajectoryChunkRecord,
+  CanonicalTrajectoryDocument,
+  CanonicalTrajectoryEvent,
+  CanonicalTrajectoryRecord,
+} from '../types.ts'
 
 interface NativeTrajectoryViewProps {
   readonly useSession: <Selected>(selector: (snapshot: ConversationSnapshot) => Selected) => Selected
@@ -41,11 +46,54 @@ export function resolveDshTrajectoryComponent(
   return entry.component as DshTrajectoryBridge['component']
 }
 
+function packedPayload(record: CanonicalTrajectoryChunkRecord): readonly string[] {
+  const payload = record.type === 'tool-call-chunks' ? record.data.args : record.data.texts
+  if (payload === undefined || payload.length === 0 || record.data.dt.length !== payload.length - 1) {
+    throw new TypeError(`malformed ${record.type} trajectory record`)
+  }
+  return payload
+}
+
+function isPackedChunkRecord(record: CanonicalTrajectoryRecord): record is CanonicalTrajectoryChunkRecord {
+  return 'seq0' in record && (record.type === 'text-chunks'
+    || record.type === 'reasoning-chunks' || record.type === 'tool-call-chunks')
+}
+
+/** Losslessly expand one transport-packed delta run back to its canonical envelopes. */
+function canonicalEvents(record: CanonicalTrajectoryRecord): readonly CanonicalTrajectoryEvent[] {
+  if (!isPackedChunkRecord(record)) return [record]
+  const payload = packedPayload(record)
+  const events: CanonicalTrajectoryEvent[] = []
+  let time = record.time0
+  for (let index = 0; index < payload.length; index += 1) {
+    if (index > 0) time += record.data.dt[index - 1] as number
+    const chunk = record.type === 'tool-call-chunks'
+      ? {
+          type: 'tool-call-delta', index: record.data.index,
+          id: record.data.id as string,
+          ...(record.data.name === undefined ? {} : { name: record.data.name }),
+          argumentsDelta: payload[index] as string,
+        }
+      : {
+          type: record.type === 'text-chunks' ? 'text-delta' : 'reasoning-delta',
+          index: record.data.index,
+          text: payload[index] as string,
+        }
+    events.push({
+      type: 'assistant/chunk',
+      seq: record.seq0 + index,
+      time,
+      data: { turn: record.data.turn, step: record.data.step, chunk },
+    })
+  }
+  return events
+}
+
 /** Preserve every canonical envelope while handing projection ownership to DSH. */
 export function canonicalTrajectoryInputs(
   document: CanonicalTrajectoryDocument,
 ): readonly ConversationEventInput[] {
-  return document.events.map(event => ({
+  return document.records.flatMap(canonicalEvents).map(event => ({
     event: event as unknown as ConversationEventInput['event'],
     view: undefined,
   }))

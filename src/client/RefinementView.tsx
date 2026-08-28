@@ -113,9 +113,10 @@ function formatTime(timestamp: number): string {
   }).format(timestamp)
 }
 
-function TrajectoryLane({ run, document, loadRaw, closeRaw, raw, dshTrajectory }: {
+function TrajectoryLane({ run, document, trajectoryError, loadRaw, closeRaw, raw, dshTrajectory }: {
   readonly run: RefinementRunView
   readonly document: ReturnType<RefinementController['getSnapshot']>['trajectories'][string] | undefined
+  readonly trajectoryError: string | undefined
   readonly loadRaw: (cursor: string | null) => void
   readonly closeRaw: () => void
   readonly raw: RefinementProviderEvidencePage | null
@@ -173,7 +174,7 @@ function TrajectoryLane({ run, document, loadRaw, closeRaw, raw, dshTrajectory }
         {document === undefined
           ? <div className={css.empty}>{ENGLISH_T('loading')}</div>
           : document === null
-            ? <div className={css.empty}>{run.trajectory.availability} · {ENGLISH_T('trajectory.empty')}</div>
+            ? <div className={css.empty}>{trajectoryError ?? `${run.trajectory.availability} · ${ENGLISH_T('trajectory.empty')}`}</div>
             : <DshOfflineTrajectorySurface
                 bridge={dshTrajectory}
                 document={document}
@@ -438,6 +439,7 @@ export function RefinementView({
               dshTrajectory={dshTrajectory}
               run={run}
               document={state.trajectories[runId]}
+              trajectoryError={state.trajectoryErrors[runId]}
               loadRaw={(cursor) => { void loadProviderEvidence(runId, 0, cursor) }}
               closeRaw={() => { closeProviderEvidence(runId) }}
               raw={state.providerEvidence?.runId === runId ? state.providerEvidence : null}

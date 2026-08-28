@@ -30,7 +30,7 @@ export interface ExperimentModelOption {
   readonly resolved: boolean
 }
 
-export type ExperimentCombinationStatus = 'complete' | 'provisional' | 'failed' | 'unresolved'
+export type ExperimentCombinationStatus = 'complete' | 'provisional'
 
 /** One benchmark cell in a cross-iteration experiment combination row. */
 export interface ExperimentBenchmarkCell {
@@ -84,7 +84,7 @@ export function modelIdentity(value: {
   readonly provider: string | null
   readonly modelId: string
 }): string {
-  return `${value.provider ?? ''}\u0000${value.modelId}`
+  return value.modelId
 }
 
 function rowIdentity(score: Pick<BenchmarkCombinationScore,
@@ -156,47 +156,9 @@ export function experimentCombinationTable(
     groups.set(key, group)
   }
 
-  const failures = new Map<string, {
-    readonly iterationId: RefinementIterationId
-    readonly candidateId: RefinementCandidateId
-    readonly harnessId: string
-    readonly harnessRef: string
-    readonly revision: string | null
-    readonly modelId: string
-    readonly provider: string | null
-    readonly modelResolved: boolean
-    readonly protocolIdentity: string
-    readonly byBenchmark: Map<string, string>
-  }>()
-  for (const iteration of iterations) {
-    const evaluation = evaluationHistory[iteration.id]
-    if (evaluation === undefined) continue
-    for (const item of evaluation.evaluations) {
-      if (item.ref.failedEvaluation === undefined) continue
-      const run = item.runs[0]
-      const candidate = candidateById.get(item.ref.candidateId)
-      const identity = {
-        iterationId: iteration.id,
-        candidateId: item.ref.candidateId,
-        harnessId: run?.harness.id ?? candidate?.requestedHarnessRef ?? String(item.ref.candidateId),
-        harnessRef: run?.harness.requestedRef ?? candidate?.requestedHarnessRef ?? String(item.ref.candidateId),
-        revision: run?.harness.revisionIdentity ?? candidate?.revisionIdentity ?? null,
-        modelId: run?.model.effectiveId ?? run?.model.requestedId ?? item.ref.requestedModelId,
-        provider: run?.model.provider ?? null,
-        modelResolved: run !== undefined && run.model.provider !== null && run.model.effectiveId !== null,
-        protocolIdentity: run === undefined
-          ? `unresolved:${item.ref.evalId}`
-          : aggregationProtocolIdentity(run.protocolIdentity),
-      }
-      const key = rowIdentity(identity)
-      const failure = failures.get(key) ?? { ...identity, byBenchmark: new Map<string, string>() }
-      failure.byBenchmark.set(benchmarkKey(item.ref), `${item.ref.failedEvaluation.code}: ${item.ref.failedEvaluation.message}`)
-      failures.set(key, failure)
-    }
-  }
-
   const scoreRows = [...groups.entries()].map(([key, group]): ExperimentCombinationRow => {
     const first = group[0] as BenchmarkCombinationScore
+    const resolvedModel = group.find(score => score.modelResolved) ?? first
     const iteration = iterationById.get(first.iterationId)
     const candidate = candidateById.get(first.candidateId)
     const cells = benchmarks.map((benchmark): ExperimentBenchmarkCell => {
@@ -206,14 +168,12 @@ export function experimentCombinationTable(
       const delta = score === null || baselineScore === null
         ? null
         : score.candidateId === baselineCandidateId ? 0 : score.mean - baselineScore
-      return { benchmark, score, baselineScore, delta, failure: failures.get(key)?.byBenchmark.get(benchmark.key) ?? null }
+      return { benchmark, score, baselineScore, delta, failure: null }
     })
     const available = cells.flatMap(cell => cell.score === null ? [] : [cell.score])
     const deltas = cells.flatMap(cell => cell.delta === null ? [] : [cell.delta])
     const durationWeight = available.reduce((sum, score) => sum + (score.meanDurationMs === null ? 0 : score.runCount), 0)
     const provisional = available.some(score => score.provisional) || available.length < benchmarks.length
-    const unresolved = available.some(score => !score.modelResolved)
-    const failed = cells.some(cell => cell.failure !== null)
     const single = benchmarks.length === 1 ? available[0] : undefined
     return {
       key,
@@ -226,8 +186,8 @@ export function experimentCombinationTable(
       candidateRole: candidate?.role ?? 'candidate',
       harness: { key: harnessIdentity(first), id: first.harnessId, revision: first.revision },
       model: {
-        key: modelIdentity(first), id: first.modelId, provider: first.provider,
-        resolved: first.modelResolved,
+        key: modelIdentity(resolvedModel), id: resolvedModel.modelId, provider: resolvedModel.provider,
+        resolved: resolvedModel.modelResolved,
       },
       protocolIdentity: first.protocolIdentity,
       cells,
@@ -239,98 +199,16 @@ export function experimentCombinationTable(
       coverageCompleted: benchmarks.length === 1 ? single?.taskCount ?? 0 : available.length,
       coverageTotal: benchmarks.length === 1 ? single?.plannedTaskCount ?? null : benchmarks.length,
       validRuns: available.reduce((sum, score) => sum + score.runCount, 0),
-      status: failed ? 'failed' : unresolved ? 'unresolved' : provisional ? 'provisional' : 'complete',
+      status: provisional ? 'provisional' : 'complete',
     }
-  })
-  const failedRows = [...failures.entries()].flatMap(([key, failure]): readonly ExperimentCombinationRow[] => {
-    if (groups.has(key)) return []
-    const iteration = iterationById.get(failure.iterationId)
-    const candidate = candidateById.get(failure.candidateId)
-    return [{
-      key,
-      iterationId: failure.iterationId,
-      iterationOrdinal: iteration?.ordinal ?? 0,
-      iterationStatus: iteration?.status ?? 'failed',
-      directionSummary: candidate?.directionSummary ?? iteration?.directionSummary ?? null,
-      candidateId: failure.candidateId,
-      candidateLabel: candidate?.label ?? String(failure.candidateId),
-      candidateRole: candidate?.role ?? 'candidate',
-      harness: {
-        key: harnessIdentity(failure), id: failure.harnessId, revision: failure.revision,
-      },
-      model: {
-        key: modelIdentity(failure), id: failure.modelId, provider: failure.provider,
-        resolved: failure.modelResolved,
-      },
-      protocolIdentity: failure.protocolIdentity,
-      cells: benchmarks.map(benchmark => ({
-        benchmark,
-        score: null,
-        baselineScore: null,
-        delta: null,
-        failure: failure.byBenchmark.get(benchmark.key) ?? null,
-      })),
-      meanScore: null,
-      meanDelta: null,
-      meanDurationMs: null,
-      coverageCompleted: 0,
-      coverageTotal: benchmarks.length === 1 ? null : benchmarks.length,
-      validRuns: 0,
-      status: 'failed',
-    }]
   })
   const uniqueScoreRows = new Map<string, ExperimentCombinationRow>()
   for (const row of [...scoreRows].sort((left, right) => left.iterationOrdinal - right.iterationOrdinal)) {
     const signature = evidenceSignature(row)
     if (!uniqueScoreRows.has(signature)) uniqueScoreRows.set(signature, row)
   }
-  const representedCandidateIterations = new Set([...scoreRows, ...failedRows]
-    .map(row => `${row.iterationId}\u0000${row.candidateId}`))
-  const candidateFailureRows = iterations.flatMap((iteration): readonly ExperimentCombinationRow[] => iteration.candidateIds.flatMap((candidateId) => {
-    const candidate = candidateById.get(candidateId)
-    if (candidate?.failure === undefined
-      || representedCandidateIterations.has(`${iteration.id}\u0000${candidateId}`)) return []
-    const requestedModelId = iteration.evaluationRefs[0]?.requestedModelId ?? 'unresolved'
-    const key = `${iteration.id}\u0000${candidateId}\u0000candidate-failure`
-    return [{
-      key,
-      iterationId: iteration.id,
-      iterationOrdinal: iteration.ordinal,
-      iterationStatus: iteration.status,
-      directionSummary: candidate.directionSummary ?? iteration.directionSummary ?? null,
-      candidateId,
-      candidateLabel: candidate.label,
-      candidateRole: candidate.role,
-      harness: {
-        key: harnessIdentity({ harnessId: candidate.requestedHarnessRef, revision: candidate.revisionIdentity }),
-        id: candidate.requestedHarnessRef,
-        revision: candidate.revisionIdentity,
-      },
-      model: {
-        key: modelIdentity({ provider: null, modelId: requestedModelId }),
-        id: requestedModelId,
-        provider: null,
-        resolved: false,
-      },
-      protocolIdentity: `unresolved:${candidateId}`,
-      cells: benchmarks.map(benchmark => ({
-        benchmark,
-        score: null,
-        baselineScore: null,
-        delta: null,
-        failure: `${candidate.failure?.code ?? 'candidate-failed'}: ${candidate.failure?.message ?? 'candidate failed'}`,
-      })),
-      meanScore: null,
-      meanDelta: null,
-      meanDurationMs: null,
-      coverageCompleted: 0,
-      coverageTotal: benchmarks.length === 1 ? null : benchmarks.length,
-      validRuns: 0,
-      status: 'failed',
-    }]
-  }))
-  const rows = [...uniqueScoreRows.values(), ...failedRows, ...candidateFailureRows].sort((left, right) => {
-    const statusRank = { complete: 0, provisional: 1, unresolved: 2, failed: 3 } as const
+  const rows = [...uniqueScoreRows.values()].sort((left, right) => {
+    const statusRank = { complete: 0, provisional: 1 } as const
     const leftCoverage = left.coverageTotal === null ? 0 : left.coverageCompleted / Math.max(1, left.coverageTotal)
     const rightCoverage = right.coverageTotal === null ? 0 : right.coverageCompleted / Math.max(1, right.coverageTotal)
     return statusRank[left.status] - statusRank[right.status]
@@ -341,17 +219,19 @@ export function experimentCombinationTable(
   })
   const harnesses = [...new Map(rows.map(row => [row.harness.key, row.harness])).values()]
     .sort((left, right) => left.id.localeCompare(right.id) || (left.revision ?? '').localeCompare(right.revision ?? ''))
-  const models = [...new Map(rows.map(row => [row.model.key, row.model])).values()]
+  const modelsByKey = new Map<string, ExperimentModelOption>()
+  for (const row of rows) {
+    const current = modelsByKey.get(row.model.key)
+    if (current === undefined || (!current.resolved && row.model.resolved)) modelsByKey.set(row.model.key, row.model)
+  }
+  const models = [...modelsByKey.values()]
     .sort((left, right) => left.id.localeCompare(right.id) || (left.provider ?? '').localeCompare(right.provider ?? ''))
   return {
     benchmarks,
     harnesses,
     models,
     rows,
-    // A complete task/run set remains scoreable when only the effective model
-    // identity is unresolved. Keep the identity warning, but do not erase the
-    // benchmark score from the overview.
-    leadingRow: rows.find(row => row.status !== 'failed' && row.meanScore !== null) ?? null,
+    leadingRow: rows.find(row => row.meanScore !== null) ?? null,
   }
 }
 
@@ -369,40 +249,13 @@ export interface ExperimentTaskRow {
   /** Signed second-minus-first delta for two columns, otherwise max-minus-min range. */
   readonly difference: number | null
   readonly differenceMagnitude: number
+  readonly changed: boolean
 }
 
 export interface ExperimentTaskMatrix {
   readonly columns: readonly ExperimentCombinationRow[]
   readonly rows: readonly ExperimentTaskRow[]
   readonly invalidSelection: boolean
-}
-
-export interface ExperimentTaskSelection {
-  readonly benchmarkKey: string | null
-  readonly harnessKeys: readonly string[]
-  readonly modelKeys: readonly string[]
-}
-
-/** Select every comparable column while fixing Model first, then Harness as fallback. */
-export function comparableTaskSelection(
-  table: ExperimentCombinationTable,
-  row: ExperimentCombinationRow | null,
-  requestedBenchmarkKey: string | null = null,
-): ExperimentTaskSelection {
-  const benchmarkKey = requestedBenchmarkKey !== null
-    && table.benchmarks.some(benchmark => benchmark.key === requestedBenchmarkKey)
-    ? requestedBenchmarkKey
-    : row?.cells.find(cell => cell.score !== null)?.benchmark.key ?? table.benchmarks[0]?.key ?? null
-  if (row === null || benchmarkKey === null) return { benchmarkKey, harnessKeys: [], modelKeys: [] }
-  const hasScore = (candidate: ExperimentCombinationRow): boolean => candidate.cells
-    .some(cell => cell.benchmark.key === benchmarkKey && cell.score !== null)
-  const sameModel = table.rows.filter(candidate => candidate.model.key === row.model.key && hasScore(candidate))
-  const harnessKeys = [...new Set(sameModel.map(candidate => candidate.harness.key))]
-  if (harnessKeys.length > 1) return { benchmarkKey, harnessKeys, modelKeys: [row.model.key] }
-  const sameHarness = table.rows.filter(candidate => candidate.harness.key === row.harness.key && hasScore(candidate))
-  const modelKeys = [...new Set(sameHarness.map(candidate => candidate.model.key))]
-  if (modelKeys.length > 1) return { benchmarkKey, harnessKeys: [row.harness.key], modelKeys }
-  return { benchmarkKey, harnessKeys: [row.harness.key], modelKeys: [row.model.key] }
 }
 
 function runMatchesColumn(run: RefinementRunView, column: ExperimentCombinationRow): boolean {
@@ -422,16 +275,14 @@ export function experimentTaskMatrix(
   table: ExperimentCombinationTable,
   evaluationHistory: Readonly<Record<string, RefinementEvaluationView>>,
   selectedBenchmarkKey: string | null,
-  selectedHarnessKeys: readonly string[],
-  selectedModelKeys: readonly string[],
+  selectedColumnKeys: readonly string[],
 ): ExperimentTaskMatrix {
-  const invalidSelection = selectedHarnessKeys.length > 1 && selectedModelKeys.length > 1
-  if (invalidSelection || selectedBenchmarkKey === null) return { columns: [], rows: [], invalidSelection }
-  const harnesses = new Set(selectedHarnessKeys)
-  const models = new Set(selectedModelKeys)
-  const columns = table.rows.filter(row => harnesses.has(row.harness.key)
-    && models.has(row.model.key)
+  const invalidSelection = false
+  if (selectedBenchmarkKey === null) return { columns: [], rows: [], invalidSelection }
+  const selected = new Set(selectedColumnKeys)
+  const columns = table.rows.filter(row => selected.has(row.key)
     && row.cells.some(cell => cell.benchmark.key === selectedBenchmarkKey && cell.score !== null))
+    .sort((left, right) => left.iterationOrdinal - right.iterationOrdinal)
   const runGroups = new Map<string, RefinementRunView[]>()
   for (const column of columns) {
     const evaluation = evaluationHistory[column.iterationId]
@@ -459,12 +310,19 @@ export function experimentTaskMatrix(
     const difference = values.length < 2 ? null : values.length === 2
       ? (values[1] as number) - (values[0] as number)
       : Math.max(...values) - Math.min(...values)
+    const firstMean = cells[0]?.mean ?? null
+    const changed = columns.length >= 2 && cells.slice(1).some(cell => (
+      firstMean === null || cell.mean === null
+        ? firstMean !== cell.mean
+        : Math.abs(cell.mean - firstMean) > 1e-12
+    ))
     return {
       taskKey,
       taskId,
       cells,
       difference,
       differenceMagnitude: values.length < 2 ? 0 : Math.max(...values) - Math.min(...values),
+      changed,
     }
   }).sort((left, right) => right.differenceMagnitude - left.differenceMagnitude || left.taskId.localeCompare(right.taskId))
   return { columns, rows, invalidSelection }

@@ -152,7 +152,7 @@ describe('HitchRefinementEvidenceProvider', () => {
     expect(projection.runs[1]?.observation).toEqual({ state: 'invalid', reason: 'infrastructure' })
     expect(projection.runs[0]?.trajectory.summary?.ttftMs).toBe(2)
     const document = await provider.trajectory({ evalRef: ref(evalId, candidateId), runId: fixtures[0]?.runId as HitchRunId })
-    expect(document.events).toHaveLength(7)
+    expect(document.records).toHaveLength(7)
     const page = await provider.providerEvidence({
       evalRef: ref(evalId, candidateId),
       runId: fixtures[1]?.runId as HitchRunId,

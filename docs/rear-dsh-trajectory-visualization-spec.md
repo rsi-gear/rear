@@ -93,11 +93,11 @@ interface CanonicalTrajectoryDocument {
   runId: string
   session: SessionHeaderLine
   summary: CanonicalTrajectorySummary
-  events: SessionEvent[]
+  records: Array<SessionEvent | PackedAssistantChunkRun>
 }
 ```
 
-移除 `CanonicalTrajectoryDocument.records` 和 `CanonicalLedgerRecord`。完整 events 只在用户打开 Compare 后加载当前 1–4 条 run，不回到 `/api/hitch-data` summary payload。
+移除旧的扁平 UI `CanonicalLedgerRecord`。完整 events 只在用户打开 Compare 后加载当前 1–4 条 run，不回到 `/api/hitch-data` summary payload。为了不让 token 级 `assistant/chunk` 把 RPC 体积放大，连续 delta 在传输层使用 DSH 的无损 chunk-row 格式打包；浏览器在交给 DSH projector 前恢复为原始、seq/time 不变的 SessionEvent。
 
 ### 6.3 DSH adapter
 

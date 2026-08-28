@@ -52,6 +52,7 @@ export interface RefinementViewState {
   /** Evaluation projections retained by iteration so the overview can rank every tested version. */
   readonly evaluationHistory: Readonly<Record<string, RefinementEvaluationView>>
   readonly trajectories: Readonly<Record<string, CanonicalTrajectoryDocument | null>>
+  readonly trajectoryErrors: Readonly<Record<string, string>>
   readonly providerEvidence: RefinementProviderEvidencePage | null
   readonly error: string | null
 }
@@ -71,6 +72,7 @@ const INITIAL_STATE: RefinementViewState = {
   evaluation: null,
   evaluationHistory: {},
   trajectories: {},
+  trajectoryErrors: {},
   providerEvidence: null,
   error: null,
 }
@@ -178,6 +180,7 @@ export class RefinementController {
           selectedTaskKey: null,
           selectedRunIds: [],
           trajectories: {},
+          trajectoryErrors: {},
         } : {}),
         error: null,
       })
@@ -210,6 +213,7 @@ export class RefinementController {
         evaluation: null,
         evaluationHistory: {},
         trajectories: {},
+        trajectoryErrors: {},
         providerEvidence: null,
         error: null,
       })
@@ -231,6 +235,7 @@ export class RefinementController {
       selectedTaskKey: null,
       selectedRunIds: [],
       trajectories: {},
+      trajectoryErrors: {},
       providerEvidence: null,
     })
     await this.refreshEvaluation()
@@ -279,6 +284,7 @@ export class RefinementController {
       selectedRunIds: selected,
       attemptPairing: genuinelyPaired ? 'paired' : 'unpaired',
       trajectories: {},
+      trajectoryErrors: {},
       providerEvidence: null,
     })
     await Promise.all(selected.map(runId => this.loadTrajectory(runId)))
@@ -314,6 +320,7 @@ export class RefinementController {
       selectedRunIds: [...runIds],
       attemptPairing: null,
       trajectories: {},
+      trajectoryErrors: {},
       providerEvidence: null,
     })
     await Promise.all(runIds.map(runId => this.loadTrajectory(runId)))
@@ -358,7 +365,7 @@ export class RefinementController {
   back(): void {
     const state = this.store.getSnapshot()
     if (state.level === 'comparison') {
-      this.store.set({ ...state, level: 'evaluation', selectedTaskKey: null, selectedRunIds: [], trajectories: {}, providerEvidence: null })
+      this.store.set({ ...state, level: 'evaluation', selectedTaskKey: null, selectedRunIds: [], trajectories: {}, trajectoryErrors: {}, providerEvidence: null })
     } else if (state.level === 'evaluation') {
       this.store.set({ ...state, level: 'overview' })
     }
@@ -516,15 +523,21 @@ export class RefinementController {
       }, request.signal)
       if (!this.current(key, request.generation)) return
       if (!result.ok) {
+        const latest = this.store.getSnapshot()
         this.store.set({
-          ...this.store.getSnapshot(),
-          trajectories: { ...this.store.getSnapshot().trajectories, [runId]: null },
+          ...latest,
+          trajectories: { ...latest.trajectories, [runId]: null },
+          trajectoryErrors: { ...latest.trajectoryErrors, [runId]: result.error.message },
         })
         return
       }
+      const latest = this.store.getSnapshot()
+      const trajectoryErrors = { ...latest.trajectoryErrors }
+      delete trajectoryErrors[runId]
       this.store.set({
-        ...this.store.getSnapshot(),
-        trajectories: { ...this.store.getSnapshot().trajectories, [runId]: result.value },
+        ...latest,
+        trajectories: { ...latest.trajectories, [runId]: result.value },
+        trajectoryErrors,
       })
     } catch (error) {
       if (!request.signal.aborted) this.store.set({ ...this.store.getSnapshot(), error: failure(error) })

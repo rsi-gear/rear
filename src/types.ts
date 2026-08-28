@@ -220,11 +220,31 @@ export interface CanonicalTrajectoryEvent {
   readonly surfaceOp?: 'append' | { readonly op: 'replace'; readonly start: number; readonly end: number }
 }
 
+/** Lossless compact form for consecutive canonical assistant delta events. */
+export interface CanonicalTrajectoryChunkRecord {
+  readonly type: 'text-chunks' | 'reasoning-chunks' | 'tool-call-chunks'
+  readonly seq0: number
+  readonly time0: number
+  readonly data: {
+    readonly turn: number
+    readonly step: number
+    readonly index: number
+    readonly dt: readonly number[]
+    readonly texts?: readonly string[]
+    readonly id?: string
+    readonly name?: string
+    readonly args?: readonly string[]
+  }
+}
+
+/** One canonical event or a losslessly packed run of streaming delta events. */
+export type CanonicalTrajectoryRecord = CanonicalTrajectoryEvent | CanonicalTrajectoryChunkRecord
+
 /** Canonical completed Session document used by an offline Trajectory surface. */
 export interface CanonicalTrajectoryDocument {
   readonly runId: HitchRunId
   readonly header: SessionHeader
-  readonly events: readonly CanonicalTrajectoryEvent[]
+  readonly records: readonly CanonicalTrajectoryRecord[]
 }
 
 /** One provider-native evidence descriptor. */

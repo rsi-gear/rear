@@ -26,9 +26,10 @@ export type RefinementKey =
   | 'trajectory.empty' | 'breakdown.best'
   | 'table.combinationTitle' | 'table.combinationHint' | 'table.taskTitle' | 'table.taskHint'
   | 'table.rank' | 'table.iterationDirection' | 'table.noDirection' | 'table.coverage'
-  | 'table.operation' | 'table.bringToCompare' | 'table.benchmark' | 'table.harnessFilter'
+  | 'table.benchmark' | 'table.harnessFilter'
   | 'table.modelFilter' | 'table.all' | 'table.statusComplete' | 'table.statusProvisional'
-  | 'table.statusUnresolved' | 'table.fixedDimension' | 'table.difference'
+  | 'table.selectIteration'
+  | 'table.chooseIterations' | 'table.copy' | 'table.fullInfo' | 'table.close'
   | 'table.selectedTrajectories' | 'table.enterComparison' | 'table.chooseAttempt'
   | 'table.noMatchingCombinations' | 'table.selectionHelp' | 'table.candidate'
   | 'table.noTaskData'
@@ -84,20 +85,20 @@ export const en: Record<RefinementKey, string> = {
   'comparison.invalid': 'Invalid',
   'trajectory.empty': 'No canonical trajectory events',
   'table.combinationTitle': 'Benchmark combinations',
-  'table.combinationHint': 'All tested combinations across iterations, ranked by complete equal-weight score',
+  'table.combinationHint': 'Scored combinations across iterations, ranked by complete equal-weight score',
   'table.taskTitle': 'Task comparison',
-  'table.taskHint': 'Fix Harness or Model, then select trajectories from one task row',
+  'table.taskHint': 'Check iterations in the Benchmark table to show each Task score here',
   'table.rank': 'Rank', 'table.iterationDirection': 'Iteration / direction',
   'table.noDirection': 'No direction summary', 'table.coverage': 'Coverage',
-  'table.operation': 'Action', 'table.bringToCompare': 'Use in comparison',
   'table.benchmark': 'Benchmark', 'table.harnessFilter': 'Harness', 'table.modelFilter': 'Model',
   'table.all': 'All', 'table.statusComplete': 'Complete', 'table.statusProvisional': 'Provisional',
-  'table.statusUnresolved': 'Identity unresolved',
-  'table.fixedDimension': 'Select multiple values in only one dimension; fix either Harness or Model.',
-  'table.difference': 'Difference', 'table.selectedTrajectories': 'trajectories selected',
+  'table.selectIteration': 'Select',
+  'table.chooseIterations': 'Check one or more scored iterations in the Benchmark table.',
+  'table.copy': 'Copy', 'table.fullInfo': 'Full information', 'table.close': 'Close',
+  'table.selectedTrajectories': 'trajectories selected',
   'table.enterComparison': 'Open trajectory comparison', 'table.chooseAttempt': 'Choose attempt',
   'table.noMatchingCombinations': 'No matching experiment combinations',
-  'table.selectionHelp': 'Select 2–4 trajectories from the same task row.',
+  'table.selectionHelp': 'Select 1–4 trajectories from the same task row.',
   'table.candidate': 'Candidate',
   'table.noTaskData': 'No task data',
   'status.queued': 'Queued', 'status.preparing': 'Preparing', 'status.evaluating': 'Evaluating',
@@ -155,20 +156,20 @@ export const zh: Record<RefinementKey, string> = {
   'comparison.invalid': '无效',
   'trajectory.empty': '没有可显示的规范化轨迹事件',
   'table.combinationTitle': 'Benchmark 组合表',
-  'table.combinationHint': '跨迭代展示所有已评测组合，按完整结果的等权平均得分排序',
+  'table.combinationHint': '跨迭代展示有评分结果的组合，按完整结果的等权平均得分排序',
   'table.taskTitle': 'Task 对比表',
-  'table.taskHint': '固定 Harness 或模型，在同一任务行选择要对比的轨迹',
+  'table.taskHint': '在 Benchmark 表勾选迭代后，在这里展示各 Task 的得分',
   'table.rank': '排名', 'table.iterationDirection': '迭代 / 方向',
   'table.noDirection': '暂无方向摘要', 'table.coverage': '覆盖率',
-  'table.operation': '操作', 'table.bringToCompare': '带入对比',
   'table.benchmark': 'Benchmark', 'table.harnessFilter': 'Harness', 'table.modelFilter': '模型',
   'table.all': '全部', 'table.statusComplete': '完整', 'table.statusProvisional': '暂定',
-  'table.statusUnresolved': '身份未解析',
-  'table.fixedDimension': '只能在一个维度中多选，请固定 Harness 或模型。',
-  'table.difference': '差异', 'table.selectedTrajectories': '条轨迹已选择',
+  'table.selectIteration': '选择',
+  'table.chooseIterations': '请先在 Benchmark 表勾选一个或多个已评分迭代。',
+  'table.copy': '复制', 'table.fullInfo': '完整信息', 'table.close': '关闭',
+  'table.selectedTrajectories': '条轨迹已选择',
   'table.enterComparison': '进入轨迹对比', 'table.chooseAttempt': '选择尝试',
   'table.noMatchingCombinations': '没有匹配的实验组合',
-  'table.selectionHelp': '请在同一个 Task 行选择 2–4 条轨迹。',
+  'table.selectionHelp': '请在同一个 Task 行选择 1–4 条轨迹。',
   'table.candidate': '候选',
   'table.noTaskData': '暂无 Task 数据',
   'status.queued': '排队中', 'status.preparing': '准备中', 'status.evaluating': '评测中',

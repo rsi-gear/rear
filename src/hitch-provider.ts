@@ -8,10 +8,12 @@ import type { FSWatcher } from 'node:fs'
 import { basename, isAbsolute, join, relative, resolve } from 'node:path'
 import { TextDecoder } from 'node:util'
 import s from '@deepseek-ai/schemastery'
-import type { SessionHeader } from '@deepseek-ai/dsh-session/types'
+import { packChunkRuns } from '@deepseek-ai/dsh-session'
+import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session/types'
 import type {
   CanonicalTrajectoryDocument,
   CanonicalTrajectoryEvent,
+  CanonicalTrajectoryRecord,
   HitchEvalId,
   HitchRunId,
   RefinementComparisonExclusion,
@@ -772,7 +774,8 @@ export class HitchRefinementEvidenceProvider implements RefinementEvidenceProvid
     }
     if (file === null) throw new RefinementProviderError('trajectory-not-found', `run "${request.runId}" has no canonical trajectory`)
     const parsed = canonicalLines(verifiedFile(loaded.directory, file))
-    return { runId: request.runId, header: parsed.header, events: parsed.events }
+    const records = packChunkRuns(parsed.events as unknown as readonly SessionEvent[]) as unknown as CanonicalTrajectoryRecord[]
+    return { runId: request.runId, header: parsed.header, records }
   }
 
   /** Read one checksum-validated provider evidence page under its complete encoded byte bound. */

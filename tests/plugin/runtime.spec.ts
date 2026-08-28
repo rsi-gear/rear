@@ -429,7 +429,7 @@ describe('Gear-backed RefinementRuntime', () => {
     })
     expect(trajectory).toMatchObject({ ok: true, value: { runId: value.candidateRunId } })
     if (!trajectory.ok) throw new Error(trajectory.error.message)
-    expect(trajectory.value.events.map(event => event.type)).toEqual([
+    expect(trajectory.value.records.map(event => event.type)).toEqual([
       'turn/start', 'assistant/message', 'turn/end',
     ])
   })
