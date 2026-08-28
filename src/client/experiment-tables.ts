@@ -348,7 +348,10 @@ export function experimentCombinationTable(
     harnesses,
     models,
     rows,
-    leadingRow: rows.find(row => row.status === 'complete') ?? null,
+    // A complete task/run set remains scoreable when only the effective model
+    // identity is unresolved. Keep the identity warning, but do not erase the
+    // benchmark score from the overview.
+    leadingRow: rows.find(row => row.status !== 'failed' && row.meanScore !== null) ?? null,
   }
 }
 

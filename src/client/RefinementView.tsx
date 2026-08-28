@@ -264,7 +264,9 @@ export function RefinementView({
                       {t('overview.harnessVersion')} · {shortVersion(best.revision ?? best.harnessRef, t('unknown'))}
                     </span>
                     {bestCandidate !== null && <span className={css.pill}>{bestCandidate.label}</span>}
-                    {best.provisional && <span className={css.pill} data-tone="warning">{t('overview.provisional')}</span>}
+                    {(best.provisional || bestCombinationRow?.status !== 'complete') && (
+                      <span className={css.pill} data-tone="warning">{t('overview.provisional')}</span>
+                    )}
                   </div>
                 </>
               )}

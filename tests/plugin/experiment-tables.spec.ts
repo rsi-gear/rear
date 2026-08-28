@@ -148,6 +148,25 @@ describe('experiment detail tables', () => {
     expect(new Set(matrix.rows.flatMap(row => row.cells.flatMap(cell => cell.selectableRunIds))).size).toBe(2)
   })
 
+  it('keeps complete task evidence scoreable when only the effective model identity is unresolved', () => {
+    const current = iteration('iteration-unresolved-model', 1)
+    const resolved = projection('unresolved-model', [['task-a', 1], ['task-b', 0]])
+    const unresolved: RefinementEvaluationView = {
+      ...resolved,
+      evaluations: resolved.evaluations.map(evaluation => ({
+        ...evaluation,
+        runs: evaluation.runs.map(item => ({
+          ...item,
+          model: { ...item.model, effectiveId: null },
+        })),
+      })),
+    }
+    const table = experimentCombinationTable([current], [candidate], candidateId, { [current.id]: unresolved })
+
+    expect(table.rows[0]).toMatchObject({ status: 'unresolved', meanScore: 0.5, coverageCompleted: 2, coverageTotal: 2 })
+    expect(table.leadingRow?.key).toBe(table.rows[0]?.key)
+  })
+
   it('aligns tasks across iteration columns and averages attempts within each task', () => {
     const first = iteration('iteration-1', 1)
     const second = iteration('iteration-2', 2)
