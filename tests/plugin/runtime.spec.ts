@@ -172,16 +172,21 @@ function evidence(evalId: string, runId: string, trialId: string, commit: string
   return {
     provider: 'hitch-cli', conditionId: 'condition-1', effectiveConfigDigest: 'config-1',
     evalId, dataset: 'seed', requestedCommit: commit, actualCommit: commit,
-    revisionIdentity: `revision-${commit}`, primaryReward: reward,
+    revisionIdentity: `revision-${commit}`, completeness: 'complete', plannedTrialCount: 1, primaryReward: reward,
     summary: { total: 1, passed: reward > 0 ? 1 : 0, failed: reward > 0 ? 0 : 1, score: reward },
     trials: [{
       taskName: 'task-1', trialName: trialId, runId, attempt: 1,
       status: 'completed', rewards: { reward },
     }],
+    invalidTrials: [],
   }
 }
 
-async function harness(forgedCandidateRun = false, roundStatus = 'accepted'): Promise<Harness> {
+async function harness(
+  forgedCandidateRun = false,
+  roundStatus = 'accepted',
+  repairCompleted = false,
+): Promise<Harness> {
   const root = await mkdtemp(join(tmpdir(), 'rear-gear-runtime-'))
   const gearRoot = join(root, 'gear')
   const hitchRoot = join(root, 'hitch')
@@ -195,8 +200,8 @@ async function harness(forgedCandidateRun = false, roundStatus = 'accepted'): Pr
   const candidateRun = `run_${'2'.repeat(32)}`
   const baselineCommit = 'a'.repeat(40)
   const candidateCommit = 'b'.repeat(40)
-  await hitchEvaluation(hitchRoot, baselineEval, baselineRun, 'trial-baseline', 'baseline', 0)
-  await hitchEvaluation(hitchRoot, candidateEval, candidateRun, 'trial-candidate', 'candidate', 1)
+  await hitchEvaluation(hitchRoot, baselineEval, baselineRun, 'trial-baseline', baselineCommit, 0)
+  await hitchEvaluation(hitchRoot, candidateEval, candidateRun, 'trial-candidate', candidateCommit, 1)
   const createdAt = '2026-08-25T00:00:00.000Z'
   const updatedAt = '2026-08-25T00:01:00.000Z'
   await json(join(gearRoot, 'registry.json'), {
@@ -214,9 +219,10 @@ async function harness(forgedCandidateRun = false, roundStatus = 'accepted'): Pr
     updatedAt,
     targetHarnessRef: baselineCommit,
     seedTaskRef: 'seed',
+    heldOutRef: 'held-out',
     plan: {
-      seed: { model: 'deepseek-chat' },
-      heldOut: { model: 'deepseek-chat' },
+      seed: { model: 'deepseek-chat', conditionId: 'condition-1' },
+      heldOut: { model: 'deepseek-chat', conditionId: 'condition-held-out' },
     },
     parentAllocations: [{
       candidateId: 'candidate-1', parentCandidateId: 'initial-baseline', parentHarnessRef: baselineCommit,
@@ -228,6 +234,10 @@ async function harness(forgedCandidateRun = false, roundStatus = 'accepted'): Pr
     candidatePool: [{
       candidateId: 'candidate-1', parentHarnessRef: baselineCommit,
       parentCandidateIds: ['initial-baseline'], status: 'selected',
+      proposal: {
+        rationale: 'Reduce unsafe tool behavior found in the baseline trajectories.',
+        expectedOutcome: 'Keep the final user workflow intact after verification.',
+      },
       sealedVersion: { commitOid: candidateCommit },
       seedEvaluation: evidence(
         candidateEval,
@@ -239,6 +249,20 @@ async function harness(forgedCandidateRun = false, roundStatus = 'accepted'): Pr
     }],
     promotionCandidateId: 'candidate-1',
     promotedCandidateId: 'candidate-1',
+    evaluationAttempts: [{
+      provider: 'hitch-cli', evalId: baselineEval, phase: 'seed-baseline',
+      owner: { candidateId: 'initial-baseline', harnessRef: baselineCommit, role: 'baseline' },
+      conditionId: 'condition-1', dataset: 'seed', requestedModelId: 'deepseek-chat', requestedCommit: baselineCommit,
+      status: 'settled', startedAt: createdAt, completedAt: updatedAt,
+    }, {
+      provider: 'hitch-cli', evalId: candidateEval, phase: 'seed-candidate',
+      owner: { candidateId: 'candidate-1', harnessRef: candidateCommit, role: 'candidate' },
+      conditionId: 'condition-1', dataset: 'seed', requestedModelId: 'deepseek-chat', requestedCommit: candidateCommit,
+      status: repairCompleted ? 'repair-completed' : 'settled', startedAt: createdAt, completedAt: updatedAt,
+    }],
+    ...(repairCompleted ? {
+      evaluationRepairResume: { provider: 'hitch-cli', evalId: candidateEval, completedAt: updatedAt },
+    } : {}),
   })
   const ctx = new Context()
   await ctx.plugin(SessionStore)
@@ -276,6 +300,7 @@ async function failedHarness(
   const round = 'failed-round'
   const evalId = `eval_${'3'.repeat(32)}`
   const harnessRef = 'c'.repeat(40)
+  const ownerId = `champion-${harnessRef}`
   const invalidReason = 'invalid observation: final answer is missing'
   const runs: FailedRunFixture[] = [
     { runId: `run_${'3'.repeat(32)}`, taskName: 'task-1', trialName: 'trial-1', trajectory: 'canonical' },
@@ -308,17 +333,20 @@ async function failedHarness(
     updatedAt,
     targetHarnessRef: harnessRef,
     seedTaskRef: 'seed',
+    heldOutRef: 'held-out',
     plan: {
-      seed: { model: 'deepseek-chat' },
-      heldOut: { model: 'deepseek-reasoner' },
+      seed: { model: 'deepseek-chat', conditionId: 'condition-seed' },
+      heldOut: { model: 'deepseek-reasoner', conditionId: 'condition-held-out' },
     },
     candidatePool: [],
     failedEvaluations: [{
       phase: 'seed-baseline',
-      owner: { candidateId: 'failed-baseline', harnessRef, role: 'baseline' },
+      owner: { candidateId: ownerId, harnessRef, role: 'baseline' },
       evidence: {
         evalId,
-        provider: 'hitch',
+        provider: 'hitch-cli',
+        conditionId: 'condition-seed',
+        effectiveConfigDigest: 'config-seed',
         dataset: 'seed',
         requestedCommit: harnessRef,
         actualCommit: harnessRef,
@@ -326,6 +354,13 @@ async function failedHarness(
         runSetComplete: true,
         trials,
       },
+      failure: { code: 'invalid-observation', message: invalidReason },
+    }],
+    evaluationAttempts: [{
+      provider: 'hitch-cli', evalId, phase: 'seed-baseline',
+      owner: { candidateId: ownerId, harnessRef, role: 'baseline' },
+      conditionId: 'condition-seed', dataset: 'seed', requestedModelId: 'deepseek-chat', requestedCommit: harnessRef,
+      status: 'failed', startedAt: createdAt, completedAt: updatedAt,
       failure: { code: 'invalid-observation', message: invalidReason },
     }],
     failure: { phase: 'seed-baseline', message: 'baseline evaluation failed closed' },
@@ -373,6 +408,10 @@ describe('Gear-backed RefinementRuntime', () => {
     expect(detail.value).toMatchObject({
       objective: 'Improve tool safety',
       driver: { id: 'gear', operationId: 'evolution-1' },
+      candidates: [{ id: 'gear-candidate:initial-baseline' }, {
+        id: 'gear-candidate:candidate-1',
+        directionSummary: 'Keep the final user workflow intact after verification.',
+      }],
       iterations: [{ id: value.roundId, evaluationRefs: [{ benchmarkId: 'gear-benchmark' }, { benchmarkId: 'gear-benchmark' }] }],
     })
     const evaluated = await value.ctx.refinements.evaluation({
@@ -393,6 +432,43 @@ describe('Gear-backed RefinementRuntime', () => {
     expect(trajectory.value.events.map(event => event.type)).toEqual([
       'turn/start', 'assistant/message', 'turn/end',
     ])
+  })
+
+  it('projects current Gear repair-completed evidence through its durable resume intent', async () => {
+    const value = await harness(false, 'repairing-evaluation', true)
+    const detail = value.ctx.refinements.get({ sessionId: value.sessionId, refinementId: value.evolutionId })
+    expect(detail).toMatchObject({
+      ok: true,
+      value: {
+        status: 'running',
+        activeIterationId: value.roundId,
+        iterations: [{
+          status: 'rerunning',
+          evaluationRefs: [
+            { evalId: `eval_${'1'.repeat(32)}` },
+            { evalId: `eval_${'2'.repeat(32)}` },
+          ],
+        }],
+      },
+    })
+    const evaluated = await value.ctx.refinements.evaluation({
+      sessionId: value.sessionId,
+      refinementId: value.evolutionId,
+      iterationId: value.roundId,
+      dimension: 'harness',
+      referenceRunId: null,
+    })
+    expect(evaluated).toMatchObject({
+      ok: true,
+      value: {
+        evaluations: expect.arrayContaining([
+          expect.objectContaining({
+            ref: expect.objectContaining({ evalId: `eval_${'2'.repeat(32)}` }),
+            status: 'succeeded',
+          }),
+        ]),
+      },
+    })
   })
 
   it('projects a rerunning Gear attempt from Hitch progress before repaired Gear evidence exists', async () => {
@@ -505,9 +581,9 @@ describe('Gear-backed RefinementRuntime', () => {
     if (!detail.ok) throw new Error(detail.error.message)
     expect(detail.value).toMatchObject({
       status: 'failed',
-      baselineCandidateId: 'gear-candidate:failed-baseline',
+      baselineCandidateId: `gear-candidate:champion-${'c'.repeat(40)}`,
       candidates: [{
-        id: 'gear-candidate:failed-baseline',
+        id: `gear-candidate:champion-${'c'.repeat(40)}`,
         role: 'baseline',
         requestedHarnessRef: 'c'.repeat(40),
         revisionIdentity: 'failed-revision',
@@ -517,7 +593,7 @@ describe('Gear-backed RefinementRuntime', () => {
         status: 'failed',
         failure: { code: 'seed-baseline', message: 'baseline evaluation failed closed' },
         evaluationRefs: [{
-          candidateId: 'gear-candidate:failed-baseline',
+          candidateId: `gear-candidate:champion-${'c'.repeat(40)}`,
           requestedModelId: 'deepseek-chat',
           failedEvaluation: {
             phase: 'seed-baseline',

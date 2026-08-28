@@ -102,12 +102,30 @@ const gearTrialSchema = z.object({
 const gearEvidenceSchema = z.object({
   provider: z.string().min(1),
   conditionId: z.string().min(1),
+  effectiveConfigDigest: z.string().min(1),
   evalId: z.string().min(1),
   dataset: z.string().min(1),
   requestedCommit: z.string().min(1),
   actualCommit: z.string().min(1),
   revisionIdentity: z.string().min(1),
+  completeness: z.enum(['complete', 'partial']),
+  plannedTrialCount: z.number().int().nonnegative(),
+  primaryReward: z.number().finite(),
+  summary: z.object({
+    total: z.number().int().nonnegative(),
+    passed: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+    score: z.number().finite(),
+  }).passthrough(),
   trials: z.array(gearTrialSchema),
+  invalidTrials: z.array(z.object({
+    taskName: z.string().min(1),
+    trialName: z.string().min(1),
+    runId: z.string().min(1),
+    attempt: z.number().int().positive(),
+    status: z.literal('errored'),
+    invalidReason: z.string().min(1),
+  }).passthrough()),
 }).passthrough()
 
 const gearFailedEvaluationTrialSchema = z.object({
@@ -129,6 +147,8 @@ const gearFailedEvaluationSchema = z.object({
   evidence: z.object({
     evalId: z.string().min(1),
     provider: z.string().min(1),
+    conditionId: z.string().min(1),
+    effectiveConfigDigest: z.string().min(1),
     dataset: z.string().min(1),
     requestedCommit: z.string().min(1),
     actualCommit: z.string().min(1),
@@ -155,10 +175,17 @@ const gearEvaluationAttemptSchema = z.object({
   dataset: z.string().min(1),
   requestedModelId: z.string(),
   requestedCommit: z.string().min(1),
-  status: z.enum(['running', 'rerunning', 'settled', 'failed', 'cancelled']),
+  status: z.enum(['running', 'rerunning', 'repair-completed', 'settled', 'failed', 'cancelled']),
   startedAt: z.string().min(1),
   completedAt: z.string().min(1).optional(),
   failure: z.object({ code: z.string().min(1), message: z.string().min(1) }).optional(),
+  reusedFromRoundId: z.string().min(1).optional(),
+}).passthrough()
+
+const gearEvaluationRepairResumeSchema = z.object({
+  provider: z.string().min(1),
+  evalId: z.string().min(1),
+  completedAt: z.string().min(1),
 }).passthrough()
 
 const gearCandidateSchema = z.object({
@@ -169,6 +196,10 @@ const gearCandidateSchema = z.object({
   sealedVersion: z.object({ commitOid: z.string().min(1) }).passthrough().optional(),
   seedEvaluation: gearEvidenceSchema.optional(),
   heldOutEvaluation: gearEvidenceSchema.optional(),
+  proposal: z.object({
+    rationale: z.string().min(1),
+    expectedOutcome: z.string().min(1),
+  }).passthrough().optional(),
   failure: z.object({ phase: z.string(), message: z.string() }).optional(),
 }).passthrough()
 
@@ -183,10 +214,10 @@ const gearRoundSchema = z.object({
   updatedAt: z.string().min(1),
   targetHarnessRef: z.string().min(1),
   seedTaskRef: z.string().min(1),
-  heldOutRef: z.string().min(1).optional(),
+  heldOutRef: z.string().min(1),
   plan: z.object({
-    seed: z.object({ model: z.string().min(1), conditionId: z.string().min(1).optional() }).passthrough(),
-    heldOut: z.object({ model: z.string().min(1), conditionId: z.string().min(1).optional() }).passthrough(),
+    seed: z.object({ model: z.string().min(1), conditionId: z.string().min(1) }).passthrough(),
+    heldOut: z.object({ model: z.string().min(1), conditionId: z.string().min(1) }).passthrough(),
   }).passthrough(),
   parentAllocations: z.array(z.object({
     candidateId: z.string().min(1),
@@ -209,6 +240,7 @@ const gearRoundSchema = z.object({
     heldOutCandidate: gearEvidenceSchema.optional(),
   }).passthrough().optional(),
   evaluationAttempts: z.array(gearEvaluationAttemptSchema).optional(),
+  evaluationRepairResume: gearEvaluationRepairResumeSchema.optional(),
   failedEvaluations: z.array(gearFailedEvaluationSchema).optional(),
   failure: z.object({ phase: z.string(), message: z.string() }).optional(),
 }).passthrough()
@@ -544,9 +576,15 @@ export class RefinementRuntime extends Service {
       revisionIdentity: string | null,
       label: string,
       createdAt: number,
+      directionSummary?: string,
+      candidateStatus?: string,
+      candidateFailure?: RefinementFailure,
     ): RefinementCandidateId => {
       const id = candidateId(rawId)
       const current = candidates.get(id)
+      const persistedDirectionSummary = directionSummary ?? current?.value.directionSummary
+      const persistedStatus = candidateStatus ?? current?.value.status
+      const persistedFailure = candidateFailure ?? current?.value.failure
       const value: RefinementCandidateRecord = {
         id,
         role: current?.value.role === 'baseline' ? 'baseline' : role,
@@ -554,6 +592,9 @@ export class RefinementRuntime extends Service {
         requestedHarnessRef: requestedHarnessRef || current?.value.requestedHarnessRef || rawId,
         revisionIdentity: revisionIdentity ?? current?.value.revisionIdentity ?? null,
         label: current?.value.label ?? label,
+        ...(persistedStatus === undefined ? {} : { status: persistedStatus }),
+        ...(persistedDirectionSummary === undefined ? {} : { directionSummary: persistedDirectionSummary }),
+        ...(persistedFailure === undefined ? {} : { failure: persistedFailure }),
         createdAt: current?.value.createdAt ?? createdAt,
       }
       candidates.set(id, { order: current?.order ?? nextOrder++, value })
@@ -624,6 +665,12 @@ export class RefinementRuntime extends Service {
           candidate.seedEvaluation?.revisionIdentity ?? candidate.heldOutEvaluation?.revisionIdentity ?? null,
           `Candidate ${candidate.candidateId}`,
           createdAt,
+          candidate.proposal?.expectedOutcome ?? candidate.proposal?.rationale,
+          candidate.status,
+          candidate.failure === undefined ? undefined : {
+            code: candidate.failure.phase || 'candidate-failed',
+            message: candidate.failure.message,
+          },
         ))
       }
       for (const failed of round.failedEvaluations ?? []) {
@@ -645,6 +692,8 @@ export class RefinementRuntime extends Service {
       const completedAt = SETTLED_ROUND.has(round.status) || round.status === 'failed'
         ? timestamp(round.updatedAt)
         : undefined
+      const proposedDirection = round.candidatePool.find(candidate => candidate.proposal !== undefined)?.proposal
+      const directionSummary = proposedDirection?.expectedOutcome ?? proposedDirection?.rationale
       return {
         id: iterationId(round.roundId),
         ordinal: index + 1,
@@ -653,6 +702,7 @@ export class RefinementRuntime extends Service {
         evaluationRefs: refs,
         createdAt,
         ...(completedAt === undefined ? {} : { completedAt }),
+        ...(directionSummary === undefined ? {} : { directionSummary }),
         ...(round.failure === undefined ? {} : {
           failure: { code: round.failure.phase || 'gear-round-failed', message: round.failure.message },
         }),
@@ -714,11 +764,18 @@ export class RefinementRuntime extends Service {
       }
       if (attempt !== undefined) {
         const evidenceCondition = 'conditionId' in evidence ? evidence.conditionId : undefined
+        const repaired = attempt.status === 'repair-completed'
+          && round.evaluationRepairResume?.provider === attempt.provider
+          && round.evaluationRepairResume.evalId === attempt.evalId
+          && round.evaluationRepairResume.completedAt === attempt.completedAt
+        const finalEvidenceOwned = attempt.status === 'settled' || repaired
+        const failedEvidenceOwned = attempt.status === 'failed' || attempt.status === 'cancelled'
+          || attempt.status === 'rerunning'
         if (attempt.phase !== phase || candidateId(attempt.owner.candidateId) !== owner
           || attempt.dataset !== evidence.dataset || attempt.requestedCommit !== evidence.requestedCommit
           || attempt.owner.harnessRef !== evidence.actualCommit || attempt.requestedModelId !== model
           || (evidenceCondition !== undefined && attempt.conditionId !== evidenceCondition)
-          || (failedEvaluation === undefined ? attempt.status !== 'settled' : attempt.status === 'running')) {
+          || (failedEvaluation === undefined ? !finalEvidenceOwned : !failedEvidenceOwned)) {
           throw new TypeError(`Gear final eval conflicts with attempt ownership: ${evidence.evalId}`)
         }
       }
@@ -750,6 +807,9 @@ export class RefinementRuntime extends Service {
     add(round.evaluation?.heldOutBaseline, fallbackBaselineId, round.plan.heldOut.model, 'held-out-baseline')
     add(round.evaluation?.heldOutCandidate, promoted === undefined ? null : candidateId(promoted), round.plan.heldOut.model, 'held-out-candidate')
     for (const failed of round.failedEvaluations ?? []) {
+      const attempt = (round.evaluationAttempts ?? []).find(value => value.provider === failed.evidence.provider
+        && value.evalId === failed.evidence.evalId)
+      if (attempt?.status === 'settled' || attempt?.status === 'repair-completed') continue
       const model = failed.phase.startsWith('seed-')
         ? round.plan.seed.model
         : round.plan.heldOut.model
@@ -770,6 +830,7 @@ export class RefinementRuntime extends Service {
         }
         continue
       }
+      if (attempt.status === 'repair-completed') continue
       const ref = this.attemptEvaluationRef(attempt, owner)
       if (ref === null) continue
       seen.set(key, refs.length)
@@ -800,8 +861,19 @@ export class RefinementRuntime extends Service {
       const terminal = !active
       if (terminal !== (attempt.completedAt !== undefined)
         || (active && attempt.failure !== undefined)
-        || ((attempt.status === 'failed' || attempt.status === 'cancelled') && attempt.failure === undefined)) {
+        || ((attempt.status === 'failed' || attempt.status === 'cancelled') && attempt.failure === undefined)
+        || ((attempt.status === 'settled' || attempt.status === 'repair-completed') && attempt.failure !== undefined)
+        || (attempt.reusedFromRoundId !== undefined
+          && (attempt.reusedFromRoundId === round.roundId || attempt.phase !== 'seed-baseline'
+            || attempt.status !== 'settled'))) {
         throw new TypeError(`Gear eval attempt lifecycle is invalid: ${attempt.evalId}`)
+      }
+      if (attempt.status === 'repair-completed') {
+        const resume = round.evaluationRepairResume
+        if (resume?.provider !== attempt.provider || resume.evalId !== attempt.evalId
+          || resume.completedAt !== attempt.completedAt) {
+          throw new TypeError(`Gear completed eval repair has no durable resume intent: ${attempt.evalId}`)
+        }
       }
       timestamp(attempt.startedAt)
       if (attempt.completedAt !== undefined) timestamp(attempt.completedAt)
@@ -824,7 +896,7 @@ export class RefinementRuntime extends Service {
     attempt: GearEvaluationAttempt,
     owner: RefinementCandidateId,
   ): RefinementEvaluationRef | null {
-    const identity = this.hitchEvalIdentityForAttempt(attempt)
+    const identity = this.hitchEvalIdentityForEval(attempt.evalId)
     if (identity === null) return null
     return {
       providerId: this.provider.id,
@@ -929,29 +1001,29 @@ export class RefinementRuntime extends Service {
     return { benchmarkId, benchmarkRevision }
   }
 
-  private hitchEvalIdentityForAttempt(attempt: GearEvaluationAttempt): HitchEvalIdentity | null {
-    const directory = join(this.provider.rootPath, 'evals', attempt.evalId)
+  private hitchEvalIdentityForEval(evalId: string): HitchEvalIdentity | null {
+    const directory = join(this.provider.rootPath, 'evals', evalId)
     if (!existsSync(directory)) return null
     const info = lstatSync(directory)
-    if (!info.isDirectory() || info.isSymbolicLink()) throw new TypeError(`Hitch eval directory is invalid: ${attempt.evalId}`)
+    if (!info.isDirectory() || info.isSymbolicLink()) throw new TypeError(`Hitch eval directory is invalid: ${evalId}`)
     const identities: HitchEvalIdentity[] = []
     for (const name of ['request.json', 'progress.json', 'result.json']) {
       const path = join(directory, name)
       if (!existsSync(path)) continue
-      const value = regularJson(path, this.provider.rootPath, `Hitch eval ${attempt.evalId} ${name}`)
+      const value = regularJson(path, this.provider.rootPath, `Hitch eval ${evalId} ${name}`)
       if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-        throw new TypeError(`Hitch eval ${attempt.evalId} ${name} is not an object`)
+        throw new TypeError(`Hitch eval ${evalId} ${name} is not an object`)
       }
       const record = value as Record<string, unknown>
       if ((name === 'progress.json' || name === 'result.json')
-        && (record['schema_version'] !== '1' || record['eval_id'] !== attempt.evalId)) {
-        throw new TypeError(`Hitch eval ${attempt.evalId} ${name} identity mismatch`)
+        && (record['schema_version'] !== '1' || record['eval_id'] !== evalId)) {
+        throw new TypeError(`Hitch eval ${evalId} ${name} identity mismatch`)
       }
       const benchmarkId = record['benchmark_id']
       const benchmarkRevision = record['benchmark_revision']
       if (typeof benchmarkId !== 'string' || benchmarkId.length === 0
         || typeof benchmarkRevision !== 'string' || benchmarkRevision.length === 0) {
-        throw new TypeError(`Hitch eval ${attempt.evalId} ${name} has no canonical benchmark identity`)
+        throw new TypeError(`Hitch eval ${evalId} ${name} has no canonical benchmark identity`)
       }
       identities.push({ benchmarkId, benchmarkRevision })
     }
@@ -959,7 +1031,7 @@ export class RefinementRuntime extends Service {
     const first = identities[0]!
     if (identities.some(identity => identity.benchmarkId !== first.benchmarkId
       || identity.benchmarkRevision !== first.benchmarkRevision)) {
-      throw new TypeError(`Hitch eval ${attempt.evalId} benchmark identity changed across artifacts`)
+      throw new TypeError(`Hitch eval ${evalId} benchmark identity changed across artifacts`)
     }
     return first
   }

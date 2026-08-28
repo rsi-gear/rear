@@ -21,7 +21,10 @@ export interface BenchmarkCombinationScore {
   readonly revision: string | null
   readonly modelId: string
   readonly provider: string | null
+  readonly modelResolved: boolean
   readonly protocolIdentity: string
+  readonly evaluationIds: readonly string[]
+  readonly runIds: readonly string[]
   readonly mean: number
   readonly meanDurationMs: number | null
   readonly taskCount: number
@@ -36,7 +39,7 @@ export function benchmarkKey(value: { readonly benchmarkId: string; readonly ben
 }
 
 /** Remove protocol fields that describe a task fixture rather than the execution combination. */
-function aggregationProtocolIdentity(identity: string): string {
+export function aggregationProtocolIdentity(identity: string): string {
   try {
     const parsed: unknown = JSON.parse(identity)
     if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return identity
@@ -63,7 +66,10 @@ export function combinationScores(
     revision: string | null
     modelId: string
     provider: string | null
+    modelResolved: boolean
     protocolIdentity: string
+    evaluationIds: Set<string>
+    runIds: Set<string>
     tasks: Map<string, number[]>
     plannedTaskCounts: number[]
     durations: number[]
@@ -82,6 +88,7 @@ export function combinationScores(
         item.ref.benchmarkRevision,
         run.harness.id,
         run.harness.revisionIdentity ?? '',
+        run.model.provider ?? '',
         modelId,
         protocolIdentity,
       ].join('\u0000')
@@ -94,7 +101,10 @@ export function combinationScores(
         revision: run.harness.revisionIdentity,
         modelId,
         provider: run.model.provider,
+        modelResolved: run.model.provider !== null && run.model.effectiveId !== null,
         protocolIdentity,
+        evaluationIds: new Set<string>(),
+        runIds: new Set<string>(),
         tasks: new Map<string, number[]>(),
         plannedTaskCounts: [],
         durations: [],
@@ -104,6 +114,8 @@ export function combinationScores(
       const rewards = group.tasks.get(run.taskKey) ?? []
       rewards.push(run.observation.reward)
       group.tasks.set(run.taskKey, rewards)
+      group.evaluationIds.add(String(run.evalId))
+      group.runIds.add(String(run.id))
       if (item.plannedTasks !== null) group.plannedTaskCounts.push(item.plannedTasks)
       if (run.startedAt !== undefined && run.completedAt !== undefined && run.completedAt >= run.startedAt) {
         group.durations.push(run.completedAt - run.startedAt)
@@ -128,7 +140,10 @@ export function combinationScores(
       revision: group.revision,
       modelId: group.modelId,
       provider: group.provider,
+      modelResolved: group.modelResolved,
       protocolIdentity: group.protocolIdentity,
+      evaluationIds: [...group.evaluationIds].sort(),
+      runIds: [...group.runIds].sort(),
       mean: taskMeans.reduce((sum, value) => sum + value, 0) / taskMeans.length,
       meanDurationMs: group.durations.length === 0
         ? null

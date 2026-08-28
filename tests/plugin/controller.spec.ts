@@ -237,6 +237,104 @@ describe('RefinementController', () => {
     controller.dispose()
   })
 
+  it('opens a trajectory comparison from runs in different iterations', async () => {
+    const candidateId = 'candidate-cross-iteration' as RefinementCandidateId
+    const firstIterationId = 'iteration-cross-1' as RefinementIterationId
+    const secondIterationId = 'iteration-cross-2' as RefinementIterationId
+    const firstRunId = 'run-cross-1' as HitchRunId
+    const secondRunId = 'run-cross-2' as HitchRunId
+    const value: RefinementRecordV1 = {
+      ...record('refinement-cross-iteration'),
+      baselineCandidateId: candidateId,
+      activeIterationId: secondIterationId,
+      candidates: [{
+        id: candidateId,
+        role: 'baseline',
+        parentCandidateId: null,
+        requestedHarnessRef: 'harness-a',
+        revisionIdentity: 'revision-a',
+        label: 'Baseline',
+        createdAt: 1,
+      }],
+      iterations: [firstIterationId, secondIterationId].map((id, index) => ({
+        id,
+        ordinal: index + 1,
+        status: 'settled',
+        candidateIds: [candidateId],
+        evaluationRefs: [{
+          providerId: 'hitch',
+          evalId: `eval-cross-${index + 1}` as HitchEvalId,
+          candidateId,
+          requestedModelId: 'model-a',
+          benchmarkId: 'benchmark-a',
+          benchmarkRevision: 'revision-a',
+        }],
+        createdAt: index + 1,
+      })),
+    }
+    const client = remote([value])
+    client.evaluation = vi.fn(async request => {
+      const first = request.iterationId === firstIterationId
+      const runId = first ? firstRunId : secondRunId
+      const evalId = `eval-cross-${first ? 1 : 2}` as HitchEvalId
+      return {
+        ok: true as const,
+        value: {
+          evidenceVersion: String(request.iterationId),
+          evaluations: [{
+            ref: {
+              providerId: 'hitch', evalId, candidateId, requestedModelId: 'model-a',
+              benchmarkId: 'benchmark-a', benchmarkRevision: 'revision-a',
+            },
+            status: 'succeeded' as const,
+            plannedTasks: 1,
+            settledTasks: 1,
+            runs: [{
+              id: runId,
+              evalId,
+              candidateId,
+              trialId: `trial-${first ? 1 : 2}`,
+              attempt: 1,
+              taskKey: 'task-key-a',
+              taskId: 'task-a',
+              execution: 'succeeded' as const,
+              observation: { state: 'valid' as const, reward: first ? 0 : 1 },
+              integrity: 'valid' as const,
+              harness: {
+                requestedRef: first ? 'harness-a' : 'harness-b',
+                id: first ? 'harness-a' : 'harness-b',
+                revisionIdentity: first ? 'revision-a' : 'revision-b',
+              },
+              model: { requestedId: 'model-a', provider: 'test', effectiveId: 'model-a' },
+              protocolIdentity: 'protocol-a',
+              trajectory: { availability: 'available' as const, hasCanonical: true, providerFileCount: 0 },
+            }],
+            diagnostics: [],
+          }],
+          comparison: {
+            strict: true,
+            dimension: request.dimension,
+            referenceRunId: null,
+            exclusions: [],
+            tasks: [],
+          },
+        },
+      }
+    })
+    const controller = new RefinementController(client, SID)
+    await controller.ensure()
+    await vi.waitFor(() => {
+      expect(Object.keys(controller.getSnapshot().evaluationHistory)).toHaveLength(2)
+    })
+    await controller.selectRuns([firstRunId, secondRunId])
+    expect(controller.getSnapshot()).toMatchObject({
+      level: 'comparison',
+      selectedTaskKey: 'task-key-a',
+      selectedRunIds: [firstRunId, secondRunId],
+    })
+    controller.dispose()
+  })
+
   it('opens a provider-only task from a single failed baseline evaluation without duplicating its run', async () => {
     const candidateId = 'candidate-failed-baseline' as RefinementCandidateId
     const iterationId = 'iteration-failed' as RefinementIterationId

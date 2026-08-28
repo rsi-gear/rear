@@ -51,6 +51,11 @@ export interface RefinementCandidateRecord {
   readonly requestedHarnessRef: string
   readonly revisionIdentity: string | null
   readonly label: string
+  /** Gear-owned candidate lifecycle state retained for failed/no-evaluation rows. */
+  readonly status?: string
+  /** Authoritative persisted proposal outcome/rationale for this candidate, when available. */
+  readonly directionSummary?: string
+  readonly failure?: RefinementFailure
   readonly createdAt: number
 }
 
@@ -81,6 +86,8 @@ export interface RefinementIterationRecord {
   readonly evaluationRefs: readonly RefinementEvaluationRef[]
   readonly createdAt: number
   readonly completedAt?: number
+  /** Authoritative persisted summary of the iteration direction, when Gear provides one. */
+  readonly directionSummary?: string
   readonly failure?: RefinementFailure
 }
 

@@ -20,6 +20,7 @@ import type {
   RefinementTrajectoryRequest,
   RefinementTrajectoryResult,
 } from '../types.ts'
+import { aggregationProtocolIdentity } from './benchmark-dashboard.ts'
 
 /** Transport-neutral generated Remote surface consumed by one controller. */
 export interface RefinementRemoteClient {
@@ -289,9 +290,11 @@ export class RefinementController {
    */
   async selectRuns(runIds: readonly HitchRunId[]): Promise<void> {
     if (runIds.length < 1 || runIds.length > 4) throw new RangeError('select one to four runs')
-    const evaluation = this.store.getSnapshot().evaluation
-    if (evaluation === null) throw new Error('no evaluation is loaded')
-    const runs = new Map(evaluation.evaluations.flatMap(item => item.runs).map(run => [run.id, run]))
+    const state = this.store.getSnapshot()
+    const evaluations = Object.values(state.evaluationHistory)
+    if (evaluations.length === 0) throw new Error('no evaluation is loaded')
+    const runs = new Map(evaluations.flatMap(evaluation => evaluation.evaluations)
+      .flatMap(item => item.runs).map(run => [run.id, run]))
     const selected = runIds.map((id) => {
       const run = runs.get(id)
       if (run === undefined) throw new Error(`run ${id} is not part of the loaded evaluation`)
@@ -299,8 +302,13 @@ export class RefinementController {
       return run
     })
     if (new Set(selected.map(run => run.taskKey)).size !== 1) throw new Error('selected runs have different task identities')
+    const protocols = new Set(selected.map(run => aggregationProtocolIdentity(run.protocolIdentity)))
+    if (protocols.size !== 1) throw new Error('selected runs have different comparison protocols')
+    const harnesses = new Set(selected.map(run => `${run.harness.id}\u0000${run.harness.revisionIdentity ?? ''}`))
+    const models = new Set(selected.map(run => `${run.model.provider ?? ''}\u0000${run.model.effectiveId ?? run.model.requestedId}`))
+    if (harnesses.size > 1 && models.size > 1) throw new Error('fix either Harness or Model before comparing trajectories')
     this.store.set({
-      ...this.store.getSnapshot(),
+      ...state,
       selectedTaskKey: selected[0]?.taskKey ?? null,
       level: 'comparison',
       selectedRunIds: [...runIds],
@@ -415,13 +423,16 @@ export class RefinementController {
         && result.value.iterations.some(iteration => iteration.id === state.selectedIterationId)
         ? state.selectedIterationId
         : result.value.activeIterationId ?? result.value.iterations.at(-1)?.id ?? null
+      const validIterationIds = new Set(result.value.iterations.map(iteration => iteration.id))
+      const retainedEvaluationHistory = Object.fromEntries(Object.entries(state.evaluationHistory)
+        .filter(([id]) => validIterationIds.has(id as RefinementIterationId)))
       this.abortPrefix('evaluation-history:')
       this.store.set({
         ...state,
         status: 'ready',
         detail: result.value,
         selectedIterationId: iterationId,
-        evaluationHistory: {},
+        evaluationHistory: retainedEvaluationHistory,
         error: null,
       })
       if (iterationId !== null) {
