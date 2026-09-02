@@ -25,6 +25,10 @@ const schemas = {
     fileOrdinal: z.number().int().nonnegative(),
     cursor: z.string().nullable(),
   }),
+  'interaction-evidence': getRequest.extend({
+    runId: run,
+    cursor: z.string().nullable(),
+  }),
   changes: z.object({ sessionId: session, after: z.string().nullable() }),
 } as const
 
@@ -111,6 +115,10 @@ export function mountRefinementRpc(
         case 'provider-evidence': return {
           ok: true,
           value: await runtime.providerEvidence(schemas['provider-evidence'].parse(payload) as never),
+        }
+        case 'interaction-evidence': return {
+          ok: true,
+          value: await runtime.interactionEvidence(schemas['interaction-evidence'].parse(payload) as never),
         }
         case 'changes': {
           const request = schemas.changes.parse(payload)

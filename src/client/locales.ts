@@ -2,11 +2,14 @@
 export type RefinementKey =
   | 'view.refinement' | 'empty.title' | 'empty.body' | 'loading' | 'unknown'
   | 'overview.title' | 'evaluation.title' | 'comparison.title' | 'back'
-  | 'evaluation.failedEvidence'
+  | 'evaluation.failedEvidence' | 'evaluation.phase' | 'evaluation.progress'
   | 'status' | 'objective' | 'iterations' | 'open' | 'strict' | 'exploratory'
   | 'task' | 'baseline' | 'candidate' | 'delta' | 'state' | 'compare'
   | 'attempts' | 'evidence.raw' | 'evidence.hide' | 'evidence.canonical' | 'unpaired'
-  | 'evidence.next' | 'dimension.harness' | 'dimension.model' | 'runs'
+  | 'evidence.next' | 'evidence.interactions' | 'evidence.hideInteractions' | 'evidence.nextInteractions'
+  | 'execution.provider' | 'execution.worker' | 'execution.lease' | 'execution.images' | 'execution.requested' | 'execution.observed'
+  | 'capture.title' | 'capture.completeness' | 'capture.interactions' | 'capture.redaction'
+  | 'dimension.harness' | 'dimension.model' | 'runs'
   | 'overview.kicker' | 'overview.bestScore' | 'overview.leadingCombination'
   | 'overview.harnessVersion' | 'overview.benchmarkVersion' | 'overview.openBreakdown'
   | 'overview.noScore' | 'overview.history' | 'overview.updated' | 'overview.provisional'
@@ -47,12 +50,16 @@ export const en: Record<RefinementKey, string> = {
   loading: 'Loading…', unknown: 'Unknown',
   'overview.title': 'Refinement overview', 'evaluation.title': 'Iteration evaluation',
   'evaluation.failedEvidence': 'Failed evaluation',
+  'evaluation.phase': 'Phase', 'evaluation.progress': 'Settled tasks',
   'comparison.title': 'Task trajectory comparison', back: 'Back',
   status: 'Status', objective: 'Objective', iterations: 'Iterations', open: 'Open',
   strict: 'Strict comparison', exploratory: 'Exploratory comparison', task: 'Task',
   baseline: 'Baseline', candidate: 'Candidate', delta: 'Delta', state: 'State',
   compare: 'Compare trajectories', attempts: 'attempts', 'evidence.raw': 'Raw evidence',
   'evidence.hide': 'Hide raw evidence',
+  'evidence.interactions': 'Model interactions',
+  'evidence.hideInteractions': 'Hide model interactions',
+  'evidence.nextInteractions': 'Next model-interaction page',
   'evidence.canonical': 'Canonical trajectory', unpaired: 'Unpaired attempts',
   'evidence.next': 'Next raw trajectory page', 'dimension.harness': 'Harness',
   'dimension.model': 'Model', runs: 'Runs',
@@ -83,6 +90,10 @@ export const en: Record<RefinementKey, string> = {
   'comparison.tokens': 'Tokens', 'comparison.ttft': 'TTFT',
   'comparison.eval': 'Eval', 'comparison.trial': 'Trial', 'comparison.protocol': 'Protocol',
   'comparison.invalid': 'Invalid',
+  'execution.provider': 'Provider', 'execution.worker': 'Worker', 'execution.lease': 'Lease',
+  'execution.images': 'Images', 'execution.requested': 'Requested', 'execution.observed': 'Observed',
+  'capture.title': 'Capture', 'capture.completeness': 'Completeness',
+  'capture.interactions': 'Interactions', 'capture.redaction': 'Redaction',
   'trajectory.empty': 'No canonical trajectory events',
   'table.combinationTitle': 'Benchmark combinations',
   'table.combinationHint': 'Scored combinations across iterations, ranked by complete equal-weight score',
@@ -118,12 +129,16 @@ export const zh: Record<RefinementKey, string> = {
   loading: '加载中…', unknown: '未知',
   'overview.title': '迭代总览', 'evaluation.title': '迭代测评',
   'evaluation.failedEvidence': '失败评测',
+  'evaluation.phase': '阶段', 'evaluation.progress': '已结算任务',
   'comparison.title': '任务轨迹对比', back: '返回',
   status: '状态', objective: '目标', iterations: '迭代', open: '打开',
   strict: '严格对比', exploratory: '探索性对比', task: '任务',
   baseline: '基线', candidate: '候选', delta: '差值', state: '状态',
   compare: '对比轨迹', attempts: '次尝试', 'evidence.raw': '原始证据',
   'evidence.hide': '收起原始证据',
+  'evidence.interactions': '模型交互',
+  'evidence.hideInteractions': '收起模型交互',
+  'evidence.nextInteractions': '下一页模型交互',
   'evidence.canonical': '规范化轨迹', unpaired: '未配对尝试',
   'evidence.next': '下一页原始轨迹', 'dimension.harness': 'Harness',
   'dimension.model': '模型', runs: '运行记录',
@@ -154,6 +169,10 @@ export const zh: Record<RefinementKey, string> = {
   'comparison.tokens': 'Token', 'comparison.ttft': '首 Token 延迟',
   'comparison.eval': '评测', 'comparison.trial': '试验', 'comparison.protocol': '协议',
   'comparison.invalid': '无效',
+  'execution.provider': '执行后端', 'execution.worker': 'Worker', 'execution.lease': '租约',
+  'execution.images': '镜像', 'execution.requested': '申请资源', 'execution.observed': '观测资源',
+  'capture.title': '采集', 'capture.completeness': '完整性',
+  'capture.interactions': '交互数', 'capture.redaction': '脱敏',
   'trajectory.empty': '没有可显示的规范化轨迹事件',
   'table.combinationTitle': 'Benchmark 组合表',
   'table.combinationHint': '跨迭代展示有评分结果的组合，按完整结果的等权平均得分排序',

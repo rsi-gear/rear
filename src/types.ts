@@ -143,6 +143,31 @@ export interface RefinementRunView {
   readonly harness: { readonly requestedRef: string; readonly id: string; readonly revisionIdentity: string | null }
   readonly model: { readonly requestedId: string; readonly provider: string | null; readonly effectiveId: string | null }
   readonly protocolIdentity: string
+  /** Immutable execution provenance retained by Hitch's sealed result bundle. */
+  readonly executionEvidence?: {
+    readonly provider: string
+    readonly workerId?: string
+    readonly leaseId?: string
+    readonly images: readonly {
+      readonly imageId: string
+      readonly imageDigest: string
+      readonly reference: string
+    }[]
+    readonly requestedResources?: Readonly<Record<string, number>>
+    readonly observedResources?: Readonly<Record<string, number>>
+  }
+  /** Model-interaction capture policy and completeness, when Hitch recorded it. */
+  readonly capture?: {
+    readonly mode: 'off' | 'native' | 'proxy' | 'hybrid'
+    readonly required: boolean
+    readonly completeness: 'complete' | 'partial' | 'none'
+    readonly interactionCount: number
+    readonly interactionAvailable: boolean
+    readonly redaction: {
+      readonly policy: string
+      readonly status: 'applied' | 'not-needed' | 'failed'
+    }
+  }
   readonly trajectory: {
     readonly availability: 'available' | 'provider-only' | 'pending' | 'missing' | 'corrupt' | 'unsupported'
     readonly hasCanonical: boolean
@@ -159,10 +184,14 @@ export interface RefinementRunView {
   readonly completedAt?: number
 }
 
+/** Fine-grained read-only phase of a Hitch daemon evaluation. */
+export type RefinementEvaluationPhase = 'queued' | 'planning' | 'preparing' | 'running' | 'finalizing' | 'cancelling'
+
 /** One Hitch evaluation projection with all attempts retained. */
 export interface RefinementEvaluationProjection {
   readonly ref: RefinementEvaluationRef
   readonly status: 'queued' | 'running' | 'rerunning' | 'succeeded' | 'failed' | 'cancelled' | 'corrupt'
+  readonly phase?: RefinementEvaluationPhase
   readonly plannedTasks: number | null
   readonly settledTasks: number
   readonly runs: readonly RefinementRunView[]
@@ -265,6 +294,9 @@ export interface RefinementProviderEvidencePage {
   readonly nextCursor: string | null
 }
 
+/** One bounded page from Hitch's independently captured model interactions. */
+export interface RefinementInteractionEvidencePage extends RefinementProviderEvidencePage {}
+
 /** List request for one exact persisted Session lifecycle. */
 export interface RefinementListRequest {
   readonly sessionId: SessionId
@@ -296,6 +328,11 @@ export interface RefinementTrajectoryRequest extends RefinementGetRequest {
 /** Bounded provider evidence request for one referenced run. */
 export interface RefinementProviderEvidenceRequest extends RefinementTrajectoryRequest {
   readonly fileOrdinal: number
+  readonly cursor: string | null
+}
+
+/** Bounded model-interaction evidence request for one referenced run. */
+export interface RefinementInteractionEvidenceRequest extends RefinementTrajectoryRequest {
   readonly cursor: string | null
 }
 
@@ -334,6 +371,8 @@ export type RefinementEvaluationResult = RefinementSuccess<RefinementEvaluationV
 export type RefinementTrajectoryResult = RefinementSuccess<CanonicalTrajectoryDocument> | RefinementRejected
 /** Provider evidence result. */
 export type RefinementProviderEvidenceResult = RefinementSuccess<RefinementProviderEvidencePage> | RefinementRejected
+/** Model-interaction evidence result. */
+export type RefinementInteractionEvidenceResult = RefinementSuccess<RefinementInteractionEvidencePage> | RefinementRejected
 
 declare module '@deepseek-ai/cordis' {
   interface Events {

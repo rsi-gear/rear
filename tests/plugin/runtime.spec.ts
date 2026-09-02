@@ -141,6 +141,7 @@ async function failedHitchEvaluation(
     await json(join(runRoot, 'manifest.json'), {
       schema_version: '1',
       run_id: run.runId,
+      sealed: true,
       context: {
         kind: 'benchmark_task', benchmark_id: 'gear-benchmark', benchmark_revision: 'revision-1',
         task_id: run.taskName, task_digest: `digest-${run.taskName}`, verifier_identity: 'verifier-v1',

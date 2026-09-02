@@ -9,6 +9,9 @@ import type {
   RefinementGetRequest,
   RefinementGetResult,
   RefinementId,
+  RefinementInteractionEvidencePage,
+  RefinementInteractionEvidenceRequest,
+  RefinementInteractionEvidenceResult,
   RefinementIterationId,
   RefinementListRequest,
   RefinementListResult,
@@ -29,6 +32,7 @@ export interface RefinementRemoteClient {
   evaluation(request: RefinementEvaluationRequest, signal?: AbortSignal): Promise<RefinementEvaluationResult>
   trajectory(request: RefinementTrajectoryRequest, signal?: AbortSignal): Promise<RefinementTrajectoryResult>
   providerEvidence(request: RefinementProviderEvidenceRequest, signal?: AbortSignal): Promise<RefinementProviderEvidenceResult>
+  interactionEvidence(request: RefinementInteractionEvidenceRequest, signal?: AbortSignal): Promise<RefinementInteractionEvidenceResult>
   changes(
     request: { readonly sessionId: SessionId; readonly after: string | null },
     signal?: AbortSignal,
@@ -54,6 +58,7 @@ export interface RefinementViewState {
   readonly trajectories: Readonly<Record<string, CanonicalTrajectoryDocument | null>>
   readonly trajectoryErrors: Readonly<Record<string, string>>
   readonly providerEvidence: RefinementProviderEvidencePage | null
+  readonly interactionEvidence: RefinementInteractionEvidencePage | null
   readonly error: string | null
 }
 
@@ -74,6 +79,7 @@ const INITIAL_STATE: RefinementViewState = {
   trajectories: {},
   trajectoryErrors: {},
   providerEvidence: null,
+  interactionEvidence: null,
   error: null,
 }
 
@@ -215,6 +221,7 @@ export class RefinementController {
         trajectories: {},
         trajectoryErrors: {},
         providerEvidence: null,
+        interactionEvidence: null,
         error: null,
       })
     }
@@ -237,6 +244,7 @@ export class RefinementController {
       trajectories: {},
       trajectoryErrors: {},
       providerEvidence: null,
+      interactionEvidence: null,
     })
     await this.refreshEvaluation()
   }
@@ -286,6 +294,7 @@ export class RefinementController {
       trajectories: {},
       trajectoryErrors: {},
       providerEvidence: null,
+      interactionEvidence: null,
     })
     await Promise.all(selected.map(runId => this.loadTrajectory(runId)))
   }
@@ -322,6 +331,7 @@ export class RefinementController {
       trajectories: {},
       trajectoryErrors: {},
       providerEvidence: null,
+      interactionEvidence: null,
     })
     await Promise.all(runIds.map(runId => this.loadTrajectory(runId)))
   }
@@ -335,7 +345,7 @@ export class RefinementController {
   async loadProviderEvidence(runId: HitchRunId, fileOrdinal: number, cursor: string | null): Promise<void> {
     const detail = this.store.getSnapshot().detail
     if (detail === null) return
-    this.store.set({ ...this.store.getSnapshot(), providerEvidence: null })
+    this.store.set({ ...this.store.getSnapshot(), providerEvidence: null, interactionEvidence: null })
     const request = this.begin('provider-evidence')
     try {
       const result = await this.remote.providerEvidence({
@@ -361,11 +371,40 @@ export class RefinementController {
     if (state.providerEvidence !== null) this.store.set({ ...state, providerEvidence: null })
   }
 
+  /** Load one bounded page from Hitch's independent model-interaction capture. */
+  async loadInteractionEvidence(runId: HitchRunId, cursor: string | null): Promise<void> {
+    const detail = this.store.getSnapshot().detail
+    if (detail === null) return
+    this.store.set({ ...this.store.getSnapshot(), providerEvidence: null, interactionEvidence: null })
+    const request = this.begin('interaction-evidence')
+    try {
+      const result = await this.remote.interactionEvidence({
+        sessionId: this.sessionId,
+        refinementId: detail.id,
+        runId,
+        cursor,
+      }, request.signal)
+      if (!this.current('interaction-evidence', request.generation)) return
+      if (!result.ok) throw new Error(`${result.error.message} (${result.error.code})`)
+      this.store.set({ ...this.store.getSnapshot(), interactionEvidence: result.value, error: null })
+    } catch (error) {
+      if (!request.signal.aborted) this.store.set({ ...this.store.getSnapshot(), error: failure(error) })
+    }
+  }
+
+  /** Close the visible model-interaction page and cancel an in-flight replacement. */
+  closeInteractionEvidence(runId?: HitchRunId): void {
+    const state = this.store.getSnapshot()
+    if (runId !== undefined && state.interactionEvidence?.runId !== runId) return
+    this.abort('interaction-evidence')
+    if (state.interactionEvidence !== null) this.store.set({ ...state, interactionEvidence: null })
+  }
+
   /** Move one level upward without changing the current DSH Session. */
   back(): void {
     const state = this.store.getSnapshot()
     if (state.level === 'comparison') {
-      this.store.set({ ...state, level: 'evaluation', selectedTaskKey: null, selectedRunIds: [], trajectories: {}, trajectoryErrors: {}, providerEvidence: null })
+      this.store.set({ ...state, level: 'evaluation', selectedTaskKey: null, selectedRunIds: [], trajectories: {}, trajectoryErrors: {}, providerEvidence: null, interactionEvidence: null })
     } else if (state.level === 'evaluation') {
       this.store.set({ ...state, level: 'overview' })
     }

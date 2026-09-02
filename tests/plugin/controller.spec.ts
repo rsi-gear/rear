@@ -60,6 +60,7 @@ function remote(records: RefinementRecordV1[]): RefinementRemoteClient {
     evaluation: vi.fn(async () => ({ ok: false as const, error: { code: 'evaluation-not-found' as const, message: 'unused' } })),
     trajectory: vi.fn(async () => ({ ok: false as const, error: { code: 'trajectory-not-found' as const, message: 'unused' } })),
     providerEvidence: vi.fn(async () => ({ ok: false as const, error: { code: 'trajectory-not-found' as const, message: 'unused' } })),
+    interactionEvidence: vi.fn(async () => ({ ok: false as const, error: { code: 'trajectory-not-found' as const, message: 'unused' } })),
     changes: vi.fn((_request, signal?: AbortSignal) => new Promise<{
       readonly token: string | null
       readonly refinementId: RefinementId | null
@@ -98,6 +99,32 @@ describe('RefinementController', () => {
     expect(controller.getSnapshot().providerEvidence?.runId).toBe(runId)
     controller.closeProviderEvidence(runId)
     expect(controller.getSnapshot().providerEvidence).toBeNull()
+    controller.dispose()
+  })
+
+  it('keeps model-interaction evidence separate from provider-native evidence', async () => {
+    const first = record('refinement-a')
+    const runId = 'run-a' as HitchRunId
+    const client = remote([first])
+    client.interactionEvidence = vi.fn(async () => ({
+      ok: true as const,
+      value: {
+        runId,
+        file: { ordinal: 0, role: 'interaction-capture', mediaType: 'application/x-ndjson', bytes: 3, sha256: '00' },
+        encoding: 'utf8' as const,
+        content: '{}\n',
+        nextCursor: null,
+      },
+    }))
+    const controller = new RefinementController(client, SID)
+    await controller.ensure()
+    await controller.loadInteractionEvidence(runId, null)
+    expect(controller.getSnapshot().interactionEvidence?.runId).toBe(runId)
+    expect(controller.getSnapshot().providerEvidence).toBeNull()
+    controller.closeInteractionEvidence('run-b' as HitchRunId)
+    expect(controller.getSnapshot().interactionEvidence?.runId).toBe(runId)
+    controller.closeInteractionEvidence(runId)
+    expect(controller.getSnapshot().interactionEvidence).toBeNull()
     controller.dispose()
   })
 

@@ -41,6 +41,9 @@ import type {
   RefinementGetRequest,
   RefinementGetResult,
   RefinementId,
+  RefinementInteractionEvidencePage,
+  RefinementInteractionEvidenceRequest,
+  RefinementInteractionEvidenceResult,
   RefinementIterationId,
   RefinementIterationRecord,
   RefinementListRequest,
@@ -526,6 +529,23 @@ export class RefinementRuntime extends Service {
         maxBytes: this.providerEvidencePageMaxBytes,
       })
       return success<RefinementProviderEvidencePage>(page)
+    } catch (error) {
+      return this.providerFailure(error)
+    }
+  }
+
+  /** Return bounded, independently captured model interactions for a Gear-owned run. */
+  async interactionEvidence(request: RefinementInteractionEvidenceRequest): Promise<RefinementInteractionEvidenceResult> {
+    const lookup = await this.runLookup(request)
+    if (!lookup.ok) return lookup
+    try {
+      const page = await this.provider.interactionEvidence({
+        evalRef: lookup.value,
+        runId: request.runId,
+        cursor: request.cursor,
+        maxBytes: this.providerEvidencePageMaxBytes,
+      })
+      return success<RefinementInteractionEvidencePage>(page)
     } catch (error) {
       return this.providerFailure(error)
     }

@@ -6,7 +6,7 @@ Gear is the only refinement control plane. It owns `/refine`, candidate generati
 
 ## Compatibility
 
-The development and test baseline is DSH `0.1.1-rc.2`. Rear also recognizes the legacy `refinement/created` Session event written by pre-Gear Rear releases, so historical sessions containing that event remain readable. The current Gear-backed runtime never writes or consumes the event, and new refinement views do not depend on it.
+The development and test baseline is DSH `0.1.1-rc.2`. Rear feature-detects Hitch's daemon artifacts, so legacy CLI evals and daemon-submitted evals remain readable without relying on a Hitch package version. Rear also recognizes the legacy `refinement/created` Session event written by pre-Gear Rear releases, so historical sessions containing that event remain readable. The current Gear-backed runtime never writes or consumes the event, and new refinement views do not depend on it.
 
 ## Data flow
 
@@ -15,16 +15,22 @@ Gear registry + round state
   evolutionId / roundId / evalId / runId
                     │
                     ▼
-Hitch evals/<evalId>/result.json
-                    │ exact run membership
+Hitch submission.json + control.json
+                    │ lifecycle/phase only
+Hitch progress.json or result.json
+                    │ authoritative run membership
                     ▼
 Hitch runs/<runId>/manifest.json
-                    │ trajectory_ref
+      │             └─ bundle.index.json + eval/publication.json
+      ├─ trajectory_ref
+      └─ interactions/interaction.ref.json
                     ▼
-TrajectoryRef V2 → canonical trajectory file
+Canonical trajectory / provider evidence / model interactions
 ```
 
-Rear reads `gear.root/registry.json` and `gear.root/evolutions/<evolutionId>/rounds/*.json`. For every Gear evaluation that contains persisted run IDs, it verifies that the Gear run set exactly matches the Hitch eval result. Hitch then verifies eval, trial, task, attempt, benchmark, run manifest, `trajectory_ref`, file path, byte count, and checksum before Rear exposes a trajectory.
+Rear reads `gear.root/registry.json` and `gear.root/evolutions/<evolutionId>/rounds/*.json`. For every Gear evaluation that contains persisted run IDs, it verifies membership against Hitch `progress.json` while running and `result.json` when terminal. `submission.json` and `control.json` supply queued/phase/failure diagnostics but never create trial membership. Rear verifies eval, trial, task, attempt, benchmark, sealed run manifest, trajectory references, file paths, byte counts, and checksums before exposing evidence.
+
+When `bundle.index.json` is present, Rear additionally validates its complete file set, digests, context identity, bundle digest, and `eval/publication.json` receipt. Execution provider, worker/lease, resources, image identities, and capture completeness are projected into the comparison UI. Independently captured model interactions remain a separate checksum-validated, bounded read-only evidence stream rather than being treated as canonical trajectory events.
 
 Rear never guesses a run path from a `/refine` response. Gear state supplies the authoritative experiment-to-evaluation association; Hitch supplies the authoritative evaluation-to-trajectory association.
 
