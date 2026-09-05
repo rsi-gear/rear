@@ -20,9 +20,14 @@ const schemas = {
     referenceRunId: run.nullable(),
   }),
   trajectory: getRequest.extend({ runId: run }),
+  'trajectory-page': getRequest.extend({ runId: run, cursor: z.string().nullable() }),
   'provider-evidence': getRequest.extend({
     runId: run,
     fileOrdinal: z.number().int().nonnegative(),
+    cursor: z.string().nullable(),
+  }),
+  'interaction-evidence': getRequest.extend({
+    runId: run,
     cursor: z.string().nullable(),
   }),
   changes: z.object({ sessionId: session, after: z.string().nullable() }),
@@ -108,9 +113,14 @@ export function mountRefinementRpc(
         case 'get': return { ok: true, value: runtime.get(schemas.get.parse(payload) as never) }
         case 'evaluation': return { ok: true, value: await runtime.evaluation(schemas.evaluation.parse(payload) as never) }
         case 'trajectory': return { ok: true, value: await runtime.trajectory(schemas.trajectory.parse(payload) as never) }
+        case 'trajectory-page': return { ok: true, value: await runtime.trajectoryPage(schemas['trajectory-page'].parse(payload) as never) }
         case 'provider-evidence': return {
           ok: true,
           value: await runtime.providerEvidence(schemas['provider-evidence'].parse(payload) as never),
+        }
+        case 'interaction-evidence': return {
+          ok: true,
+          value: await runtime.interactionEvidence(schemas['interaction-evidence'].parse(payload) as never),
         }
         case 'changes': {
           const request = schemas.changes.parse(payload)

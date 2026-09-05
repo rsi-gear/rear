@@ -301,6 +301,7 @@ async function writeEvaluation(root, evaluation, startOrdinal) {
     await json(join(directory, 'manifest.json'), {
       schema_version: '1',
       run_id: id,
+      sealed: true,
       context: {
         kind: 'benchmark_task', benchmark_id: evaluation.benchmark.id, benchmark_revision: evaluation.benchmark.revision,
         task_id: source.taskId, task_digest: `fixture-digest:${source.taskId}`, verifier_identity: 'rear-fixture-verifier-v1',

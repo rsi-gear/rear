@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -21,8 +21,95 @@ async function json(path: string, value: unknown): Promise<void> {
   await writeFile(path, `${JSON.stringify(value)}\n`, 'utf8')
 }
 
-function digest(content: string): string {
+function digest(content: string | Buffer): string {
   return `sha256:${createHash('sha256').update(content).digest('hex')}`
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  if (value !== null && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    return `{${Object.keys(record).filter(key => record[key] !== undefined).sort()
+      .map(key => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+function digestJson(value: unknown): string {
+  return digest(canonicalJson(value))
+}
+
+function bundleRole(path: string): string {
+  if (path === 'request.json') return 'request'
+  if (path === 'resolution.json') return 'resolution'
+  if (path === 'manifest.json') return 'manifest'
+  if (path === 'result.json') return 'result'
+  if (path === 'runtime.ref.json') return 'runtime-ref'
+  if (path === 'execution.json') return 'execution-evidence'
+  if (path === 'events.jsonl') return 'control-events'
+  if (path === 'environment/image.manifest.json') return 'environment-manifest'
+  if (path.startsWith('interactions/')) return 'interaction-capture'
+  if (path === 'eval/publication.json') return 'eval-publication'
+  if (path.startsWith('verifier/')) return 'verifier-evidence'
+  if (path === 'trajectory.ref.json' || path.startsWith('trajectory/')) return 'trajectory'
+  return 'diagnostic'
+}
+
+async function bundleFiles(root: string, directory = root, prefix = ''): Promise<Array<Record<string, unknown>>> {
+  const files: Array<Record<string, unknown>> = []
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const relative = prefix === '' ? entry.name : `${prefix}/${entry.name}`
+    const absolute = join(directory, entry.name)
+    if (entry.isDirectory()) files.push(...await bundleFiles(root, absolute, relative))
+    else if (relative !== 'bundle.index.json') {
+      const bytes = await readFile(absolute)
+      files.push({ role: bundleRole(relative), path: relative, size: bytes.length, sha256: digest(bytes) })
+    }
+  }
+  return files.sort((left, right) => Buffer.from(String(left['path'])).compare(Buffer.from(String(right['path']))))
+}
+
+async function sealBundle(directory: string, manifest: Record<string, unknown>, executionEvidence: boolean): Promise<void> {
+  const interactionRef = await readFile(join(directory, 'interactions', 'interaction.ref.json'), 'utf8')
+    .then(value => JSON.parse(value) as Record<string, unknown>)
+    .catch(() => undefined)
+  const files = await bundleFiles(directory)
+  const identity = {
+    schema_version: '1',
+    run_id: manifest['run_id'],
+    sealed: true,
+    context_identity: digestJson({
+      context: manifest['context'], parent: manifest['parent'], harness: manifest['harness'],
+      model: manifest['model'], protocol: manifest['protocol'], observation: manifest['observation'],
+    }),
+    files,
+    capture: interactionRef === undefined
+      ? {
+          mode: 'native', required: false, completeness: 'complete', interaction_count: 0,
+          redaction: { policy: 'hitch-provider-redaction-v1', status: 'not-needed', rules: [] },
+        }
+      : {
+          mode: interactionRef['mode'], required: interactionRef['required'], completeness: interactionRef['completeness'],
+          interaction_count: interactionRef['interaction_count'], redaction: interactionRef['redaction'],
+        },
+    ...(interactionRef === undefined ? {} : { interaction_ref: 'interactions/interaction.ref.json' }),
+    ...(executionEvidence ? {
+      environment: {
+        images: [{ image_id: digest('image-id'), image_digest: digest('image-manifest'), reference: 'registry/image@sha256:123' }],
+        provider: 'local-docker', worker_id: 'worker-1', lease_id: `lease_${'5'.repeat(32)}`,
+      },
+      resources: {
+        requested: { cpu_millis: 1_000, memory_bytes: 1_024, container_slots: 1, build_slots: 0 },
+        observed: { cpu_millis: 900, memory_bytes: 768 },
+      },
+    } : {}),
+    provenance: { benchmark_id: 'bench', benchmark_revision: 'rev' },
+  }
+  await json(join(directory, 'bundle.index.json'), {
+    ...identity,
+    bundle_digest: digestJson(identity),
+    created_at: '2026-09-01T00:00:00.000Z',
+  })
 }
 
 function canonical(runId: string): string {
@@ -51,6 +138,10 @@ interface RunFixture {
   readonly corruptOwnership?: boolean
   readonly protocolTimeout?: number
   readonly taskId?: string
+  readonly sealedBundle?: boolean
+  readonly interactions?: readonly Record<string, unknown>[]
+  readonly sealed?: boolean
+  readonly bundleExecution?: boolean
 }
 
 async function run(root: string, evalId: HitchEvalId, value: RunFixture): Promise<void> {
@@ -76,10 +167,10 @@ async function run(root: string, evalId: HitchEvalId, value: RunFixture): Promis
     await json(join(directory, 'trajectory.ref.json'), { schema_version: '2', run_id: value.runId, files })
   }
   const valid = value.invalidReason === undefined
-  await json(join(directory, 'manifest.json'), {
+  const manifest = {
     schema_version: '1',
     run_id: value.runId,
-    sealed: true,
+    sealed: value.sealed ?? true,
     context: {
       kind: 'benchmark_task', benchmark_id: 'bench', benchmark_revision: 'rev', task_id: value.taskId ?? 'task-1',
       task_digest: 'task-digest', verifier_identity: 'verifier',
@@ -96,7 +187,43 @@ async function run(root: string, evalId: HitchEvalId, value: RunFixture): Promis
     protocol: { timeout_ms: value.protocolTimeout ?? 1_000 },
     observation: valid ? { status: 'valid', reward: value.reward } : { status: 'invalid', invalid_reason: value.invalidReason },
     ...(value.trajectory === 'missing' ? {} : { trajectory_ref: 'trajectory.ref.json' }),
-  })
+  }
+  await json(join(directory, 'manifest.json'), manifest)
+  if (value.sealedBundle === true) {
+    if (value.bundleExecution === true) {
+      await json(join(directory, 'execution.json'), { schema_version: '1', provider: 'local-docker', worker_id: 'worker-1' })
+      await json(join(directory, 'environment', 'image.manifest.json'), { schema_version: '1', reference: 'registry/image@sha256:123' })
+    }
+    if (value.interactions !== undefined) {
+      const rows = value.interactions.map((interaction, ordinal) => ({
+        schema_version: '1',
+        interaction_id: `interaction_${String(ordinal + 1).padStart(32, '0')}`,
+        run_id: value.runId,
+        sequence: ordinal + 1,
+        requested_model: 'model',
+        endpoint_identity: digest('endpoint'),
+        started_at: '2026-09-01T00:00:00.000Z',
+        status: 'succeeded',
+        ...interaction,
+      }))
+      await mkdir(join(directory, 'interactions'), { recursive: true })
+      await writeFile(join(directory, 'interactions', 'interactions.jsonl'), `${rows.map(row => JSON.stringify(row)).join('\n')}${rows.length === 0 ? '' : '\n'}`, 'utf8')
+      await json(join(directory, 'interactions', 'interaction.ref.json'), {
+        schema_version: '1', run_id: value.runId, mode: 'proxy', required: false, topology: 'host-side',
+        completeness: rows.length === 0 ? 'none' : 'complete', interaction_count: rows.length,
+        interactions_ref: 'interactions/interactions.jsonl',
+        redaction: { policy: 'hitch-model-interaction-redaction-v1', status: 'not-needed', rules: [] },
+      })
+    }
+    const trial = {
+      trial_id: value.trialId, run_id: value.runId, task_id: value.taskId ?? 'task-1', attempt: value.attempt,
+      ...(valid ? { observation_status: 'valid', reward: value.reward } : { observation_status: 'invalid', invalid_reason: value.invalidReason }),
+    }
+    await json(join(directory, 'eval', 'publication.json'), {
+      schema_version: '1', eval_id: evalId, mode: 'settle', trial, created_at: '2026-09-01T00:00:00.000Z',
+    })
+    await sealBundle(directory, manifest, value.bundleExecution === true)
+  }
 }
 
 async function evaluation(root: string, evalId: HitchEvalId, fixtures: readonly RunFixture[]): Promise<void> {
@@ -132,6 +259,56 @@ describe('HitchRefinementEvidenceProvider', () => {
     await vi.waitFor(() => { expect(changed).toHaveBeenCalled() }, { timeout: 10_000 })
     dispose()
   }, 15_000)
+
+  it('projects and validates daemon control-plane lifecycle without using it as trial membership', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-hitch-control-plane-'))
+    roots.push(root)
+    const evalId = `eval_${'1'.repeat(32)}` as HitchEvalId
+    const request = {
+      schema_version: '1', backend: 'harbor', dataset: 'bench@rev', benchmark_id: 'bench', benchmark_revision: 'rev',
+      harness_ref: 'pi@version:1.0.0', model: 'model', attempts: 1, max_concurrent: 2,
+    }
+    const execution = {
+      provider: 'local-docker', max_parallelism: 2,
+      resources: { default_trial: { cpu_millis: 1_000, memory_bytes: 1_024, container_slots: 1, build_slots: 0 } },
+      build: { mode: 'backend' }, model_capture: { mode: 'native', required: false },
+    }
+    const now = '2026-09-01T00:00:00.000Z'
+    await json(join(root, 'evals', evalId, 'request.json'), request)
+    await json(join(root, 'evals', evalId, 'submission.json'), {
+      schema_version: '1', eval_id: evalId, request, execution,
+      submission_digest: digestJson({ request, execution }), submitted_at: now,
+    })
+    await json(join(root, 'evals', evalId, 'execution-plan.json'), {
+      schema_version: '1', eval_id: evalId,
+      slots: [{ task_id: 'task-a' }, { task_id: 'task-b' }, { task_id: 'task-a' }],
+    })
+    const control = (state: string, generation: number, error?: Record<string, unknown>) => ({
+      schema_version: '1', eval_id: evalId, generation, state,
+      requested_parallelism: 2, admitted_parallelism: state === 'queued' ? 0 : 1,
+      active_leases: [], queued_work_items: [], terminal_work_items: [],
+      ...(error === undefined ? {} : { error }), created_at: now, updated_at: now,
+    })
+    await json(join(root, 'evals', evalId, 'control.json'), control('queued', 0))
+    const provider = new HitchRefinementEvidenceProvider({ id: 'hitch', root, watchDebounceMs: 5 })
+    await expect(provider.evaluation(ref(evalId, 'candidate-control' as RefinementCandidateId))).resolves.toMatchObject({
+      status: 'queued', phase: 'queued', plannedTasks: 2, settledTasks: 0, runs: [], diagnostics: [],
+    })
+
+    await json(join(root, 'evals', evalId, 'control.json'), control('planning', 1))
+    await expect(provider.evaluation(ref(evalId, 'candidate-control' as RefinementCandidateId))).resolves.toMatchObject({
+      status: 'running', phase: 'planning', settledTasks: 0,
+    })
+
+    await json(join(root, 'evals', evalId, 'result.json'), {
+      schema_version: '1', eval_id: evalId, benchmark_id: 'bench', benchmark_revision: 'rev',
+      status: 'cancelled', trials: [], error: { code: 'cancelled', message: 'cancelled before launch' },
+    })
+    await json(join(root, 'evals', evalId, 'control.json'), control('cancelled', 2, { code: 'cancelled', message: 'cancelled before launch' }))
+    await expect(provider.evaluation(ref(evalId, 'candidate-control' as RefinementCandidateId))).resolves.toMatchObject({
+      status: 'cancelled', settledTasks: 0, diagnostics: [{ code: 'cancelled', message: 'cancelled before launch' }],
+    })
+  })
 
   it('preserves attempts, invalid observations, and canonical/provider-only availability', async () => {
     const root = await mkdtemp(join(tmpdir(), 'dsh-hitch-provider-'))
@@ -181,6 +358,47 @@ describe('HitchRefinementEvidenceProvider', () => {
     const projection = await provider.evaluation(ref(evalId, candidateId))
     expect(projection.runs[0]?.trajectory.availability).toBe('corrupt')
     expect(projection.runs[0]?.integrity).toBe('corrupt')
+  })
+
+  it('verifies additive sealed bundle indexes and eval publication receipts', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-hitch-bundle-index-'))
+    roots.push(root)
+    const evalId = `eval_${'2'.repeat(32)}` as HitchEvalId
+    const fixture: RunFixture = {
+      runId: `run_${'3'.repeat(32)}` as HitchRunId,
+      candidateId: 'candidate-bundle' as RefinementCandidateId,
+      trialId: 'task-one__1', taskId: 'task-one', attempt: 1, reward: 1,
+      trajectory: 'provider-only', sealedBundle: true,
+      bundleExecution: true,
+      interactions: [{ usage: { input_tokens: 7, output_tokens: 3 } }],
+    }
+    await evaluation(root, evalId, [fixture])
+    const provider = new HitchRefinementEvidenceProvider({ id: 'hitch', root, watchDebounceMs: 5 })
+    await expect(provider.evaluation(ref(evalId, fixture.candidateId))).resolves.toMatchObject({
+      status: 'succeeded', runs: [{
+        id: fixture.runId,
+        integrity: 'valid',
+        executionEvidence: {
+          provider: 'local-docker', workerId: 'worker-1', leaseId: `lease_${'5'.repeat(32)}`,
+          requestedResources: { cpu_millis: 1_000 }, observedResources: { cpu_millis: 900 },
+        },
+        capture: { mode: 'proxy', completeness: 'complete', interactionCount: 1, interactionAvailable: true },
+      }],
+      diagnostics: [],
+    })
+    const interactions = await provider.interactionEvidence({
+      evalRef: ref(evalId, fixture.candidateId), runId: fixture.runId, cursor: null, maxBytes: 2_048,
+    })
+    expect(interactions.encoding).toBe('utf8')
+    expect(interactions.content).toContain('input_tokens')
+
+    const indexPath = join(root, 'runs', fixture.runId, 'bundle.index.json')
+    const index = JSON.parse(await readFile(indexPath, 'utf8')) as Record<string, unknown>
+    await json(indexPath, { ...index, bundle_digest: `sha256:${'0'.repeat(64)}` })
+    const fresh = new HitchRefinementEvidenceProvider({ id: 'hitch', root, watchDebounceMs: 5 })
+    await expect(fresh.evaluation(ref(evalId, fixture.candidateId))).resolves.toMatchObject({
+      status: 'succeeded', runs: [], diagnostics: [{ code: 'corrupt-run-link' }],
+    })
   })
 
   it('pages text evidence without splitting UTF-8 code points', async () => {
@@ -246,6 +464,17 @@ describe('HitchRefinementEvidenceProvider', () => {
     const projection = await provider.evaluation(ref(corruptId, corrupt.candidateId))
     expect(projection.runs).toEqual([])
     expect(projection.diagnostics).toMatchObject([{ code: 'corrupt-run-link' }])
+
+    const unsealedId = 'eval_unsealed_link' as HitchEvalId
+    const unsealed: RunFixture = {
+      runId: `run_${'8'.repeat(32)}` as HitchRunId,
+      candidateId: 'candidate-a' as RefinementCandidateId,
+      trialId: 'trial-unsealed', attempt: 1, reward: 1, trajectory: 'canonical', sealed: false,
+    }
+    await evaluation(root, unsealedId, [unsealed])
+    await expect(provider.evaluation(ref(unsealedId, unsealed.candidateId))).resolves.toMatchObject({
+      runs: [], diagnostics: [{ code: 'corrupt-run-link' }],
+    })
   })
 
   it('projects published progress trials before terminal result and rejects a conflicting final set', async () => {
@@ -334,11 +563,19 @@ describe('HitchRefinementEvidenceProvider', () => {
     })
     const rerunId = `rerun_${'4'.repeat(32)}`
     await json(join(root, 'evals', evalId, 'reruns', rerunId, 'state.json'), {
+      schema_version: '1', rerun_id: rerunId, eval_id: evalId, status: 'queued',
+      rerun_type: 'verifier-only', semantics: { preserve_run_identity: true },
+      tasks: ['task-two'], repaired_tasks: [], trials: [{ task_id: 'task-two', attempt: 1 }],
+      submitted_at: '2026-08-26T00:00:20.000Z', updated_at: '2026-08-26T00:00:20.000Z',
+    })
+    const provider = new HitchRefinementEvidenceProvider({ id: 'hitch', root, watchDebounceMs: 5 })
+    await expect(provider.evaluation(ref(evalId, candidateId))).resolves.toMatchObject({ status: 'rerunning' })
+    await json(join(root, 'evals', evalId, 'reruns', rerunId, 'state.json'), {
       schema_version: '1', rerun_id: rerunId, eval_id: evalId, status: 'running',
+      rerun_type: 'verifier-only', semantics: { preserve_run_identity: true },
       tasks: ['task-two'], repaired_tasks: ['task-two'],
       started_at: '2026-08-26T00:00:30.000Z', updated_at: '2026-08-26T00:01:00.000Z',
     })
-    const provider = new HitchRefinementEvidenceProvider({ id: 'hitch', root, watchDebounceMs: 5 })
     const projection = await provider.evaluation(ref(evalId, candidateId))
     expect(projection).toMatchObject({
       status: 'rerunning', plannedTasks: 2, settledTasks: 2,

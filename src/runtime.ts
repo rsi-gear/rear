@@ -21,6 +21,7 @@ import type SessionStore from '@deepseek-ai/dsh-session'
 import type { SessionHeader } from '@deepseek-ai/dsh-session/types'
 import { z } from 'zod'
 import './legacy-session-compat.ts'
+import { trajectoryPage } from './trajectory-pages.ts'
 import {
   HitchRefinementEvidenceProvider,
   type Config as HitchConfig,
@@ -41,6 +42,9 @@ import type {
   RefinementGetRequest,
   RefinementGetResult,
   RefinementId,
+  RefinementInteractionEvidencePage,
+  RefinementInteractionEvidenceRequest,
+  RefinementInteractionEvidenceResult,
   RefinementIterationId,
   RefinementIterationRecord,
   RefinementListRequest,
@@ -457,7 +461,19 @@ export class RefinementRuntime extends Service {
     const header = this.sessions().get(request.sessionId)?.header
     if (header === undefined) return rejected('refinement-not-found', 'Refine view Session was not found')
     const records = this.readRegistry()
-      .map(entry => summaryOf(this.project(entry, header)))
+      .map(entry => {
+        try { return summaryOf(this.project(entry, header)) }
+        catch (error) {
+          return {
+            id: `gear-evolution:${entry.evolutionId}` as RefinementId,
+            objective: entry.name ?? null, status: 'failed' as const,
+            activeIterationId: null, iterationCount: 0,
+            createdAt: timestamp(entry.createdAt), updatedAt: timestamp(entry.updatedAt),
+            version: versionOf(entry),
+            failure: { code: 'invalid-experiment-evidence', message: error instanceof Error ? error.message : String(error) },
+          }
+        }
+      })
       .sort((left, right) => right.updatedAt - left.updatedAt)
     return success<RefinementListValue>({ records })
   }
@@ -513,6 +529,20 @@ export class RefinementRuntime extends Service {
     }
   }
 
+  /** Load one bounded fragment after the same Gear/Hitch ownership checks. */
+  async trajectoryPage(request: import('./types.ts').RefinementTrajectoryPageRequest): Promise<import('./types.ts').RefinementTrajectoryPageResult> {
+    const lookup = await this.runLookup(request)
+    if (!lookup.ok) return lookup
+    try {
+      const document = await this.provider.trajectory({ evalRef: lookup.value, runId: request.runId })
+      return success(trajectoryPage(document, request.cursor, this.trajectoryResponseMaxBytes))
+    } catch (error) {
+      if (error instanceof RangeError) return rejected('response-too-large', error.message)
+      if (error instanceof TypeError) return rejected('trajectory-corrupt', error.message)
+      return this.providerFailure(error)
+    }
+  }
+
   /** Return bounded provider-native evidence for a Gear-owned run. */
   async providerEvidence(request: RefinementProviderEvidenceRequest): Promise<RefinementProviderEvidenceResult> {
     const lookup = await this.runLookup(request)
@@ -526,6 +556,23 @@ export class RefinementRuntime extends Service {
         maxBytes: this.providerEvidencePageMaxBytes,
       })
       return success<RefinementProviderEvidencePage>(page)
+    } catch (error) {
+      return this.providerFailure(error)
+    }
+  }
+
+  /** Return bounded, independently captured model interactions for a Gear-owned run. */
+  async interactionEvidence(request: RefinementInteractionEvidenceRequest): Promise<RefinementInteractionEvidenceResult> {
+    const lookup = await this.runLookup(request)
+    if (!lookup.ok) return lookup
+    try {
+      const page = await this.provider.interactionEvidence({
+        evalRef: lookup.value,
+        runId: request.runId,
+        cursor: request.cursor,
+        maxBytes: this.providerEvidencePageMaxBytes,
+      })
+      return success<RefinementInteractionEvidencePage>(page)
     } catch (error) {
       return this.providerFailure(error)
     }
@@ -864,7 +911,7 @@ export class RefinementRuntime extends Service {
         || ((attempt.status === 'failed' || attempt.status === 'cancelled') && attempt.failure === undefined)
         || ((attempt.status === 'settled' || attempt.status === 'repair-completed') && attempt.failure !== undefined)
         || (attempt.reusedFromRoundId !== undefined
-          && (attempt.reusedFromRoundId === round.roundId || attempt.phase !== 'seed-baseline'
+          && (attempt.reusedFromRoundId === round.roundId || !attempt.phase.endsWith('baseline')
             || attempt.status !== 'settled'))) {
         throw new TypeError(`Gear eval attempt lifecycle is invalid: ${attempt.evalId}`)
       }
@@ -903,6 +950,7 @@ export class RefinementRuntime extends Service {
       evalId: attempt.evalId as HitchEvalId,
       candidateId: owner,
       requestedModelId: attempt.requestedModelId,
+      conditionId: attempt.conditionId,
       benchmarkId: identity.benchmarkId,
       benchmarkRevision: identity.benchmarkRevision,
       ...(attempt.status === 'rerunning' ? { rerunning: true as const } : {}),
@@ -924,7 +972,10 @@ export class RefinementRuntime extends Service {
     failedEvaluation?: GearFailedEvaluation,
   ): RefinementEvaluationRef | null {
     if (!EVAL_ID.test(evidence.evalId)) throw new TypeError(`Gear eval id is invalid: ${evidence.evalId}`)
-    const gearTrials = evidence.trials.filter(trial => trial.runId !== undefined)
+    const gearTrials = [
+      ...evidence.trials,
+      ...(Array.isArray(evidence['invalidTrials']) ? gearEvidenceSchema.shape.invalidTrials.parse(evidence['invalidTrials']) : []),
+    ].filter(trial => trial.runId !== undefined)
     if (failedEvaluation !== undefined && failedEvaluation.evidence.runSetComplete !== true) {
       throw new TypeError(`Gear failed eval run set is incomplete: ${evidence.evalId}`)
     }
@@ -941,6 +992,7 @@ export class RefinementRuntime extends Service {
       evalId: evidence.evalId as HitchEvalId,
       candidateId: owner,
       requestedModelId,
+      conditionId: evidence.conditionId,
       benchmarkId: identity.benchmarkId,
       benchmarkRevision: identity.benchmarkRevision,
       ...(failedEvaluation === undefined ? {} : {

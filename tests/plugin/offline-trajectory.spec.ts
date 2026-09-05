@@ -54,10 +54,39 @@ describe('DSH offline trajectory bridge', () => {
     ])
   })
 
-  it('inherits the live DSH composer height so the ledger can scroll above its overlay', () => {
+  it('reserves the live composer outside the nested DSH trajectory surface', () => {
+    const rootRule = REFINEMENT_STYLES.match(/\.rear-refinement-root\{([^}]*)\}/u)?.[1]
     const trajectoryRule = REFINEMENT_STYLES.match(/\.rear-refinement-dsh-trajectory\{([^}]*)\}/u)?.[1]
+    expect(rootRule).toContain('padding:0 28px calc(var(--dsh-composer-height,152px) + 48px)')
+    expect(rootRule).toContain('scroll-padding-bottom:calc(var(--dsh-composer-height,152px) + 16px)')
+    expect(REFINEMENT_STYLES).toContain(
+      '.rear-refinement-root{padding:0 16px calc(var(--dsh-composer-height,152px) + 32px)}',
+    )
     expect(trajectoryRule).toBeDefined()
-    expect(trajectoryRule).not.toContain('--dsh-composer-height')
+    expect(trajectoryRule).toContain('--dsh-composer-height:0px')
+  })
+
+  it('wraps long lane evidence without stretching or clipping its controls', () => {
+    expect(REFINEMENT_STYLES).toContain('.rear-refinement-lane-header>*{min-width:0;max-width:100%}')
+    expect(REFINEMENT_STYLES).toContain(
+      '.rear-refinement-lane-header>.rear-refinement-muted{overflow-wrap:anywhere;white-space:normal}',
+    )
+    expect(REFINEMENT_STYLES).toContain('.rear-refinement-lane-header>button{justify-self:start}')
+  })
+
+  it('keeps REAR element defaults outside the native DSH trajectory subtree', () => {
+    expect(REFINEMENT_STYLES).toContain(
+      '.rear-refinement-root *:not(.rear-refinement-dsh-trajectory *){box-sizing:border-box}',
+    )
+    expect(REFINEMENT_STYLES).toContain(
+      '.rear-refinement-root button:not(.rear-refinement-dsh-trajectory *){',
+    )
+    expect(REFINEMENT_STYLES).toContain(
+      '.rear-refinement-root h2:not(.rear-refinement-dsh-trajectory *){',
+    )
+    expect(REFINEMENT_STYLES).not.toContain('.rear-refinement-root button{')
+    expect(REFINEMENT_STYLES).not.toContain('.rear-refinement-root *{box-sizing:border-box}')
+    expect(REFINEMENT_STYLES).not.toContain('.rear-refinement-root h2{')
   })
 
   it('highlights only explicit trajectory selections, not Task comparison rows', () => {

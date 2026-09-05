@@ -1,3 +1,4 @@
+import { runAggregationIdentity, uniqueTrialRuns } from '../run-scoring.ts'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type {
@@ -6,7 +7,6 @@ import type {
   RefinementRecordV1,
   RefinementRunView,
 } from '../types.ts'
-import { aggregationProtocolIdentity } from './benchmark-dashboard.ts'
 import {
   experimentCombinationTable,
   experimentTaskMatrix,
@@ -46,6 +46,12 @@ function short(value: string | null | undefined, fallback: string): string {
 
 function score(value: number | null | undefined): string {
   return value === null || value === undefined || !Number.isFinite(value) ? '—' : value.toFixed(3)
+}
+
+function ProcessScore({ value, count, total, t }: { readonly value: number | null | undefined; readonly count?: number | undefined; readonly total?: number | undefined; readonly t: T }) {
+  return value === undefined || value === null ? null : <span className={css.runs}>{t('score.process')} {score(value)}
+    {count !== undefined && total !== undefined && count < total && <> · {count}/{total} {t('task')}</>}
+  </span>
 }
 
 function CombinationStatus({ row, t }: { readonly row: ExperimentCombinationRow; readonly t: T }) {
@@ -162,7 +168,7 @@ export function ExperimentTablesView({
     const run = runById.get(id)
     return run === undefined ? [] : [run]
   })
-  const selectedProtocols = new Set(selectedRuns.map(run => aggregationProtocolIdentity(run.protocolIdentity)))
+  const selectedProtocols = new Set(selectedRuns.map(run => runAggregationIdentity(run)))
   const selectedHarnesses = new Set(selectedRuns.map(run => `${run.harness.id}\u0000${run.harness.revisionIdentity ?? ''}`))
   const selectedModels = new Set(selectedRuns.map(run => modelIdentity({
     provider: run.model.provider,
@@ -270,6 +276,7 @@ export function ExperimentTablesView({
                   <td className={css.identity}><strong>{row.model.id}</strong><span>{row.model.provider ?? t('unknown')}</span></td>
                   {row.cells.map(cell => <td className={css.score} key={cell.benchmark.key} title={cell.failure ?? undefined} data-status={cell.failure !== null ? 'failed' : cell.score === null ? 'missing' : cell.delta !== null && cell.delta < 0 ? 'regressed' : undefined}>
                     <strong>{score(cell.score?.mean)}</strong><span className={css.runs}>{cell.failure ?? (cell.score === null ? '—' : `${cell.score.taskCount}/${display(cell.score.plannedTaskCount, '?')}`)}</span>
+                    <ProcessScore value={cell.score?.processMean} count={cell.score?.processTaskCount} total={cell.score?.taskCount} t={t} />
                   </td>)}
                   <td className={css.score}><strong>{score(row.meanScore)}</strong><span className={css.runs}>{row.validRuns} {t('runs')}</span></td>
                   <td>{row.coverageCompleted}/{display(row.coverageTotal, '?')}</td>
@@ -306,24 +313,24 @@ export function ExperimentTablesView({
                       <td className={css.identity}><strong>{row.taskId}</strong></td>
                       {row.cells.map(cell => {
                         const selectable = cell.selectableRunIds
-                        if (selectable.length === 0) return <td className={css.score} key={cell.columnKey}><strong>{score(cell.mean)}</strong><span className={css.runs}>{cell.runs.length} {t('attempts')}</span></td>
+                        if (selectable.length === 0) return <td className={css.score} key={cell.columnKey}><strong>{score(cell.mean)}</strong><ProcessScore value={cell.processMean} t={t} /><span className={css.runs}>{uniqueTrialRuns(cell.runs).length} {t('attempts')}</span></td>
                         if (selectable.length === 1) {
                           const runId = selectable[0] as HitchRunId
                           const selected = selectedRunIds.includes(runId)
                           return <td className={css.score} key={cell.columnKey}>
                             <button type="button" className={css.selectable} aria-pressed={selected} data-selected={selected} onClick={() => { toggleRun(row.taskKey, runId) }}>
-                              <strong>{score(cell.mean)}</strong><span>{cell.runs.length} {t('attempts')} · ↗</span>
+                              <strong>{score(cell.mean)}</strong><ProcessScore value={cell.processMean} t={t} /><span>{uniqueTrialRuns(cell.runs).length} {t('attempts')} · ↗</span>
                             </button>
                           </td>
                         }
                         return <td className={css.score} key={cell.columnKey}>
-                          <details className={css.attempts}><summary><strong>{score(cell.mean)}</strong><span>{selectable.length} {t('attempts')}</span></summary>
+                          <details className={css.attempts}><summary><strong>{score(cell.mean)}</strong><ProcessScore value={cell.processMean} t={t} /><span>{uniqueTrialRuns(cell.runs).length} {t('attempts')}</span></summary>
                             <div>{selectable.map(runId => {
                               const run = runById.get(runId)
                               const selected = selectedRunIds.includes(runId)
                               return <label className={css.attempt} data-selected={selected} key={runId}>
                                 <input type="checkbox" checked={selected} onChange={() => { toggleRun(row.taskKey, runId) }} />
-                                #{run?.attempt ?? '?'} · {run?.observation.state === 'valid' ? score(run.observation.reward) : t('unknown')}
+                                #{run?.attempt ?? '?'} {run?.phase && `${t('trajectory.phase')} ${run.phase.index}/${run.phase.count}`} · {run?.observation.state === 'valid' ? score(run.observation.reward) : t('unknown')}
                               </label>
                             })}</div>
                           </details>

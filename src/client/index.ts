@@ -53,7 +53,9 @@ function remoteAdapter(ctx: Context): RefinementRemoteClient {
     get: (request, signal) => call('get', request, signal),
     evaluation: (request, signal) => call('evaluation', request, signal),
     trajectory: (request, signal) => call('trajectory', request, signal),
+    trajectoryPage: (request, signal) => call('trajectory-page', request, signal),
     providerEvidence: (request, signal) => call('provider-evidence', request, signal),
+    interactionEvidence: (request, signal) => call('interaction-evidence', request, signal),
     changes: (request, signal) => call('changes', request, signal),
   }
 }
@@ -127,6 +129,8 @@ export function apply(ctx: Context): void {
       back: () => { controller.back() },
       loadProviderEvidence: (runId, fileOrdinal, cursor) => controller.loadProviderEvidence(runId, fileOrdinal, cursor),
       closeProviderEvidence: runId => { controller.closeProviderEvidence(runId) },
+      loadInteractionEvidence: (runId, cursor) => controller.loadInteractionEvidence(runId, cursor),
+      closeInteractionEvidence: runId => { controller.closeInteractionEvidence(runId) },
       closeDetails: () => { ctx.layout.closeDetails() },
       dshTrajectory: dshTrajectory(),
     }

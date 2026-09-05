@@ -1,3 +1,4 @@
+import { runAggregationIdentity, uniqueTrialRuns } from '../run-scoring.ts'
 import type {
   HitchRunId,
   RefinementCandidateId,
@@ -8,7 +9,6 @@ import type {
   RefinementRunView,
 } from '../types.ts'
 import {
-  aggregationProtocolIdentity,
   benchmarkKey,
   overviewCombinationScores,
   type BenchmarkColumn,
@@ -238,6 +238,7 @@ export function experimentCombinationTable(
 export interface ExperimentTaskCell {
   readonly columnKey: string
   readonly mean: number | null
+  readonly processMean: number | null
   readonly runs: readonly RefinementRunView[]
   readonly selectableRunIds: readonly HitchRunId[]
 }
@@ -262,7 +263,7 @@ function runMatchesColumn(run: RefinementRunView, column: ExperimentCombinationR
   return run.candidateId === column.candidateId
     && harnessIdentity({ harnessId: run.harness.id, revision: run.harness.revisionIdentity }) === column.harness.key
     && modelIdentity({ provider: run.model.provider, modelId: run.model.effectiveId ?? run.model.requestedId }) === column.model.key
-    && aggregationProtocolIdentity(run.protocolIdentity) === column.protocolIdentity
+    && runAggregationIdentity(run) === column.protocolIdentity
 }
 
 function trajectoryAvailable(run: RefinementRunView): boolean {
@@ -297,11 +298,13 @@ export function experimentTaskMatrix(
     const cells = columns.map((column): ExperimentTaskCell => {
       const runs = (runGroups.get(column.key) ?? []).filter(run => run.taskKey === taskKey)
         .sort((left, right) => left.attempt - right.attempt)
-      const rewards = runs.flatMap(run => run.integrity === 'valid' && run.observation.state === 'valid'
+      const rewards = uniqueTrialRuns(runs).flatMap(run => run.integrity === 'valid' && run.observation.state === 'valid'
         ? [run.observation.reward] : [])
+      const processScores = uniqueTrialRuns(runs).flatMap(run => run.integrity === 'valid' && run.observation.state === 'valid' && run.verifier?.scores.process_score !== undefined ? [run.verifier.scores.process_score] : [])
       return {
         columnKey: column.key,
         mean: mean(rewards),
+        processMean: mean(processScores),
         runs,
         selectableRunIds: runs.filter(trajectoryAvailable).map(run => run.id),
       }

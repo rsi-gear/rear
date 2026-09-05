@@ -6,6 +6,7 @@ import type {
   RefinementComparisonDimension,
   RefinementEvaluationProjection,
   RefinementEvaluationRef,
+  RefinementInteractionEvidencePage,
   RefinementProviderEvidencePage,
   RefinementStrictComparisonResult,
 } from './types.ts'
@@ -30,6 +31,12 @@ export interface RefinementProviderEvidenceLookup extends RefinementTrajectoryLo
   readonly maxBytes: number
 }
 
+/** Provider-owned independently captured model-interaction lookup. */
+export interface RefinementInteractionEvidenceLookup extends RefinementTrajectoryLookup {
+  readonly cursor: string | null
+  readonly maxBytes: number
+}
+
 /** Swappable read-only evaluator evidence adapter. */
 export interface RefinementEvidenceProvider {
   readonly id: string
@@ -38,6 +45,7 @@ export interface RefinementEvidenceProvider {
   compare(request: RefinementComparisonRequest): Promise<RefinementStrictComparisonResult>
   trajectory(request: RefinementTrajectoryLookup): Promise<CanonicalTrajectoryDocument>
   providerEvidence(request: RefinementProviderEvidenceLookup): Promise<RefinementProviderEvidencePage>
+  interactionEvidence(request: RefinementInteractionEvidenceLookup): Promise<RefinementInteractionEvidencePage>
   watch(ref: RefinementEvaluationRef, onChange: () => void): () => void
 }
 

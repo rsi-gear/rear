@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -141,6 +141,7 @@ async function failedHitchEvaluation(
     await json(join(runRoot, 'manifest.json'), {
       schema_version: '1',
       run_id: run.runId,
+      sealed: true,
       context: {
         kind: 'benchmark_task', benchmark_id: 'gear-benchmark', benchmark_revision: 'revision-1',
         task_id: run.taskName, task_digest: `digest-${run.taskName}`, verifier_identity: 'verifier-v1',
@@ -390,6 +391,46 @@ async function failedHarness(
 }
 
 describe('Gear-backed RefinementRuntime', () => {
+  it('includes invalidTrials in complete membership without scoring invalid observations', async () => {
+    const value = await harness()
+    const read = async (path: string) => JSON.parse(await readFile(path, 'utf8'))
+    const roundPath = join(value.root, 'gear/evolutions/evolution-1/rounds/round-1.json')
+    const round = await read(roundPath)
+    const evalId = `eval_${'2'.repeat(32)}`, invalidId = `run_${'3'.repeat(32)}`
+    const source = join(value.root, 'hitch/runs', value.candidateRunId), target = join(value.root, 'hitch/runs', invalidId)
+    await cp(source, target, { recursive: true })
+    const manifest = await read(join(target, 'manifest.json'))
+    manifest.run_id = invalidId; manifest.parent.trial_id = 'invalid-trial'; manifest.context.task_id = 'task-2'
+    manifest.observation = { status: 'invalid', invalid_reason: 'infrastructure_failure' }
+    await json(join(target, 'manifest.json'), manifest)
+    const trajectory = await read(join(target, 'trajectory.ref.json')); trajectory.run_id = invalidId
+    await json(join(target, 'trajectory.ref.json'), trajectory)
+    const resultPath = join(value.root, 'hitch/evals', evalId, 'result.json'), result = await read(resultPath)
+    result.trials.push({ trial_id: 'invalid-trial', run_id: invalidId, task_id: 'task-2', attempt: 1, observation_status: 'invalid', invalid_reason: 'infrastructure_failure' })
+    await json(resultPath, result)
+    round.candidatePool[0].seedEvaluation.invalidTrials = [{ trialName: 'invalid-trial', runId: invalidId, taskName: 'task-2', attempt: 1, status: 'errored', invalidReason: 'infrastructure_failure' }]
+    round.candidatePool[0].seedEvaluation.completeness = 'partial'
+    round.candidatePool[0].seedEvaluation.plannedTrialCount = 2
+    await json(roundPath, round)
+    expect(value.ctx.refinements.list({ sessionId: value.sessionId })).toMatchObject({ ok: true, value: { records: [{ status: 'completed' }] } })
+    const response = await value.ctx.refinements.evaluation({ sessionId: value.sessionId, refinementId: value.evolutionId, iterationId: value.roundId, dimension: 'harness', referenceRunId: null })
+    if (!response.ok) throw new Error(response.error.message)
+    expect(response.value.evaluations[1]?.runs).toHaveLength(2)
+    expect(response.value.evaluations[1]?.runs[1]).toMatchObject({ observation: { state: 'invalid' }, integrity: 'valid' })
+  })
+
+  it('isolates a corrupt experiment in the list and accepts held-out baseline reuse', async () => {
+    const value = await harness()
+    const roundPath = join(value.root, 'gear/evolutions/evolution-1/rounds/round-1.json')
+    const round = JSON.parse(await readFile(roundPath, 'utf8'))
+    const baseline = round.evaluationAttempts[0]
+    round.evaluationAttempts.push({ ...baseline, evalId: `eval_${'4'.repeat(32)}`, phase: 'held-out-baseline', conditionId: 'condition-held-out', dataset: 'held-out', reusedFromRoundId: 'earlier-round' })
+    await json(roundPath, round)
+    expect(value.ctx.refinements.get({ sessionId: value.sessionId, refinementId: value.evolutionId }).ok).toBe(true)
+    round.evaluationAttempts[2].reusedFromRoundId = round.roundId
+    await json(roundPath, round)
+    expect(value.ctx.refinements.list({ sessionId: value.sessionId })).toMatchObject({ ok: true, value: { records: [{ failure: { code: 'invalid-experiment-evidence' } }] } })
+  })
   it('exposes no start or cancel control-plane methods', async () => {
     const value = await harness()
     expect('start' in value.ctx.refinements).toBe(false)
@@ -432,6 +473,13 @@ describe('Gear-backed RefinementRuntime', () => {
     expect(trajectory.value.records.map(event => event.type)).toEqual([
       'turn/start', 'assistant/message', 'turn/end',
     ])
+    const page = await value.ctx.refinements.trajectoryPage({ sessionId: value.sessionId,
+      refinementId: value.evolutionId, runId: value.candidateRunId, cursor: null })
+    expect(page.ok).toBe(true)
+    if (!page.ok) throw new Error(page.error.message)
+    expect(JSON.parse(page.value.content)).toEqual(trajectory.value)
+    expect(page.value.nextCursor).toBeNull()
+    expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(65_536)
   })
 
   it('projects current Gear repair-completed evidence through its durable resume intent', async () => {
@@ -683,6 +731,9 @@ describe('Gear-backed RefinementRuntime', () => {
       sessionId: value.sessionId,
       refinementId: value.evolutionId,
       runId: unownedRun,
+    })).resolves.toMatchObject({ ok: false, error: { code: 'run-not-found' } })
+    await expect(value.ctx.refinements.trajectoryPage({ sessionId: value.sessionId,
+      refinementId: value.evolutionId, runId: unownedRun, cursor: null,
     })).resolves.toMatchObject({ ok: false, error: { code: 'run-not-found' } })
     await expect(value.ctx.refinements.providerEvidence({
       sessionId: value.sessionId,

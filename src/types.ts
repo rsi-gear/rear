@@ -5,6 +5,7 @@
 
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { SessionHeader, SessionId } from '@deepseek-ai/dsh-session/types'
+import type { VerifierEvidence } from './hitch-evidence.ts'
 
 /** Identifies one Gear evolution projected into the Rear view. */
 export type RefinementId = Branded<'RefinementId'>
@@ -67,6 +68,8 @@ export interface RefinementEvaluationRef {
   readonly requestedModelId: string
   readonly benchmarkId: string
   readonly benchmarkRevision: string
+  /** Gear's persisted evaluation condition, excluding per-run remaining budgets. */
+  readonly conditionId?: string
   /** Gear currently owns an explicit task-level rerun for this eval. */
   readonly rerunning?: true
   /** Present only when Gear authoritatively recorded this as failed evaluation evidence. */
@@ -143,6 +146,36 @@ export interface RefinementRunView {
   readonly harness: { readonly requestedRef: string; readonly id: string; readonly revisionIdentity: string | null }
   readonly model: { readonly requestedId: string; readonly provider: string | null; readonly effectiveId: string | null }
   readonly protocolIdentity: string
+  /** Immutable execution provenance retained by Hitch's sealed result bundle. */
+  readonly executionEvidence?: {
+    readonly provider: string
+    readonly workerId?: string
+    readonly leaseId?: string
+    readonly images: readonly {
+      readonly imageId: string
+      readonly imageDigest: string
+      readonly reference: string
+    }[]
+    readonly requestedResources?: Readonly<Record<string, number>>
+    readonly observedResources?: Readonly<Record<string, number>>
+  }
+  /** Model-interaction capture policy and completeness, when Hitch recorded it. */
+  readonly capture?: {
+    readonly mode: 'off' | 'native' | 'proxy' | 'hybrid'
+    readonly required: boolean
+    readonly completeness: 'complete' | 'partial' | 'none'
+    readonly interactionCount: number
+    readonly interactionAvailable: boolean
+    readonly redaction: {
+      readonly policy: string
+      readonly status: 'applied' | 'not-needed' | 'failed'
+    }
+  }
+  /** Stable evaluation policy used for cross-task aggregation; raw protocol is retained above. */
+  readonly aggregationIdentity?: string
+  /** A whole trial is scored once, even when it contains several conversations. */
+  readonly phase?: { readonly groupId: string; readonly index: number; readonly count: number }
+  readonly verifier?: VerifierEvidence
   readonly trajectory: {
     readonly availability: 'available' | 'provider-only' | 'pending' | 'missing' | 'corrupt' | 'unsupported'
     readonly hasCanonical: boolean
@@ -159,10 +192,14 @@ export interface RefinementRunView {
   readonly completedAt?: number
 }
 
+/** Fine-grained read-only phase of a Hitch daemon evaluation. */
+export type RefinementEvaluationPhase = 'queued' | 'planning' | 'preparing' | 'running' | 'finalizing' | 'cancelling'
+
 /** One Hitch evaluation projection with all attempts retained. */
 export interface RefinementEvaluationProjection {
   readonly ref: RefinementEvaluationRef
   readonly status: 'queued' | 'running' | 'rerunning' | 'succeeded' | 'failed' | 'cancelled' | 'corrupt'
+  readonly phase?: RefinementEvaluationPhase
   readonly plannedTasks: number | null
   readonly settledTasks: number
   readonly runs: readonly RefinementRunView[]
@@ -265,6 +302,9 @@ export interface RefinementProviderEvidencePage {
   readonly nextCursor: string | null
 }
 
+/** One bounded page from Hitch's independently captured model interactions. */
+export interface RefinementInteractionEvidencePage extends RefinementProviderEvidencePage {}
+
 /** List request for one exact persisted Session lifecycle. */
 export interface RefinementListRequest {
   readonly sessionId: SessionId
@@ -293,9 +333,27 @@ export interface RefinementTrajectoryRequest extends RefinementGetRequest {
   readonly runId: HitchRunId
 }
 
+/** Lossless UTF-8 fragments allow even a single large event to cross bounded RPCs. */
+export interface RefinementTrajectoryPageRequest extends RefinementTrajectoryRequest {
+  readonly cursor: string | null
+}
+export interface RefinementTrajectoryPage {
+  readonly runId: HitchRunId
+  readonly sha256: string
+  readonly totalBytes: number
+  readonly content: string
+  readonly nextCursor: string | null
+}
+export type RefinementTrajectoryPageResult = RefinementSuccess<RefinementTrajectoryPage> | RefinementRejected
+
 /** Bounded provider evidence request for one referenced run. */
 export interface RefinementProviderEvidenceRequest extends RefinementTrajectoryRequest {
   readonly fileOrdinal: number
+  readonly cursor: string | null
+}
+
+/** Bounded model-interaction evidence request for one referenced run. */
+export interface RefinementInteractionEvidenceRequest extends RefinementTrajectoryRequest {
   readonly cursor: string | null
 }
 
@@ -334,6 +392,8 @@ export type RefinementEvaluationResult = RefinementSuccess<RefinementEvaluationV
 export type RefinementTrajectoryResult = RefinementSuccess<CanonicalTrajectoryDocument> | RefinementRejected
 /** Provider evidence result. */
 export type RefinementProviderEvidenceResult = RefinementSuccess<RefinementProviderEvidencePage> | RefinementRejected
+/** Model-interaction evidence result. */
+export type RefinementInteractionEvidenceResult = RefinementSuccess<RefinementInteractionEvidencePage> | RefinementRejected
 
 declare module '@deepseek-ai/cordis' {
   interface Events {
