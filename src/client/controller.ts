@@ -23,7 +23,7 @@ import type {
   RefinementTrajectoryRequest,
   RefinementTrajectoryResult,
 } from '../types.ts'
-import { aggregationProtocolIdentity } from './benchmark-dashboard.ts'
+import { runAggregationIdentity } from '../run-scoring.ts'
 
 /** Transport-neutral generated Remote surface consumed by one controller. */
 export interface RefinementRemoteClient {
@@ -31,6 +31,7 @@ export interface RefinementRemoteClient {
   get(request: RefinementGetRequest, signal?: AbortSignal): Promise<RefinementGetResult>
   evaluation(request: RefinementEvaluationRequest, signal?: AbortSignal): Promise<RefinementEvaluationResult>
   trajectory(request: RefinementTrajectoryRequest, signal?: AbortSignal): Promise<RefinementTrajectoryResult>
+  trajectoryPage?(request: import('../types.ts').RefinementTrajectoryPageRequest, signal?: AbortSignal): Promise<import('../types.ts').RefinementTrajectoryPageResult>
   providerEvidence(request: RefinementProviderEvidenceRequest, signal?: AbortSignal): Promise<RefinementProviderEvidenceResult>
   interactionEvidence(request: RefinementInteractionEvidenceRequest, signal?: AbortSignal): Promise<RefinementInteractionEvidenceResult>
   changes(
@@ -317,7 +318,7 @@ export class RefinementController {
       return run
     })
     if (new Set(selected.map(run => run.taskKey)).size !== 1) throw new Error('selected runs have different task identities')
-    const protocols = new Set(selected.map(run => aggregationProtocolIdentity(run.protocolIdentity)))
+    const protocols = new Set(selected.map(run => runAggregationIdentity(run)))
     if (protocols.size !== 1) throw new Error('selected runs have different comparison protocols')
     const harnesses = new Set(selected.map(run => `${run.harness.id}\u0000${run.harness.revisionIdentity ?? ''}`))
     const models = new Set(selected.map(run => `${run.model.provider ?? ''}\u0000${run.model.effectiveId ?? run.model.requestedId}`))
@@ -555,7 +556,7 @@ export class RefinementController {
     const key = `trajectory:${runId}`
     const request = this.begin(key)
     try {
-      const result = await this.remote.trajectory({
+      const result = await this.loadTrajectoryDocument({
         sessionId: this.sessionId,
         refinementId: detail.id,
         runId,
@@ -579,8 +580,36 @@ export class RefinementController {
         trajectoryErrors,
       })
     } catch (error) {
-      if (!request.signal.aborted) this.store.set({ ...this.store.getSnapshot(), error: failure(error) })
+      if (!request.signal.aborted && this.current(key, request.generation)) {
+        const latest = this.store.getSnapshot()
+        this.store.set({ ...latest, trajectories: { ...latest.trajectories, [runId]: null },
+          trajectoryErrors: { ...latest.trajectoryErrors, [runId]: failure(error) } })
+      }
     }
+  }
+
+  private async loadTrajectoryDocument(request: RefinementTrajectoryRequest, signal: AbortSignal): Promise<RefinementTrajectoryResult> {
+    if (!this.remote.trajectoryPage) return this.remote.trajectory(request, signal)
+    let cursor: string | null = null, digest: string | undefined, total: number | undefined
+    const contents: string[] = [], cursors = new Set<string>()
+    let received = 0
+    do {
+      const result = await this.remote.trajectoryPage({ ...request, cursor }, signal)
+      if (!result.ok) return result
+      if (signal.aborted) throw signal.reason
+      const page = result.value
+      if (page.runId !== request.runId || digest !== undefined && digest !== page.sha256 || total !== undefined && total !== page.totalBytes
+        || !Number.isSafeInteger(page.totalBytes) || page.totalBytes < 1 || page.content.length === 0) throw new Error('Canonical trajectory pages disagree')
+      digest = page.sha256; total = page.totalBytes; contents.push(page.content)
+      received += new TextEncoder().encode(page.content).byteLength
+      if (received > total) throw new Error('Canonical trajectory page exceeds declared size')
+      cursor = page.nextCursor
+      if (cursor !== null) { if (cursors.has(cursor)) throw new Error('Canonical trajectory cursor did not advance'); cursors.add(cursor) }
+    } while (cursor !== null)
+    if (received !== total) throw new Error('Canonical trajectory pages are incomplete')
+    const document = JSON.parse(contents.join('')) as CanonicalTrajectoryDocument
+    if (document.runId !== request.runId || !Array.isArray(document.records)) throw new Error('Canonical trajectory document identity mismatch')
+    return { ok: true, value: document }
   }
 
   private begin(key: string): { signal: AbortSignal; generation: number } {

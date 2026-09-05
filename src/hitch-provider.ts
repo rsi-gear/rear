@@ -7,6 +7,11 @@ import {
 import type { FSWatcher } from 'node:fs'
 import { basename, isAbsolute, join, relative, resolve } from 'node:path'
 import { TextDecoder } from 'node:util'
+import {
+  assessmentRefSchema, groupRefSchema, scoresSchema, readAssessment, readPhaseGroup, readVerifierEvidence,
+  verifyBundle, type AssessmentRef, type GroupRef, type VerifierScores, type EvidenceObservation,
+} from './hitch-evidence.ts'
+import { uniqueTrialRuns, comparisonProtocolIdentity } from './run-scoring.ts'
 import s from '@deepseek-ai/schemastery'
 import { packChunkRuns } from '@deepseek-ai/dsh-session'
 import type { SessionEvent, SessionHeader } from '@deepseek-ai/dsh-session/types'
@@ -64,7 +69,10 @@ type JsonRecord = Record<string, unknown>
 
 interface EvalTrial {
   readonly trialId: string
-  readonly runId: HitchRunId
+  readonly runId?: HitchRunId
+  readonly group?: GroupRef
+  readonly assessment?: AssessmentRef
+  readonly scores?: VerifierScores
   readonly taskId: string
   readonly attempt: number
   readonly observationStatus: 'valid' | 'invalid'
@@ -403,13 +411,20 @@ function loadTrajectory(runDirectory: string, runId: HitchRunId, refValue: unkno
 /** Parse one immutable eval result. */
 function parseTrial(value: unknown, index: number, label: string): EvalTrial {
   const trial = object(value, `${label} trial ${index}`)
-  const runId = string(trial['run_id'], `${label} trial ${index} run_id`)
-  if (!RUN_ID.test(runId)) throw new TypeError(`${label} trial ${index} run_id is invalid`)
+  const runId = trial['run_id'] === undefined ? undefined : string(trial['run_id'], `${label} trial ${index} run_id`)
+  const group = trial['run_group'] === undefined ? undefined : groupRefSchema.parse(trial['run_group'])
+  const assessment = trial['assessment'] === undefined ? undefined : assessmentRefSchema.parse(trial['assessment'])
+  const scores = trial['scores'] === undefined ? undefined : scoresSchema.parse(trial['scores'])
+  if ((runId === undefined) === (group === undefined) || runId !== undefined && !RUN_ID.test(runId)
+    || group !== undefined && assessment === undefined) throw new TypeError(`${label} trial ${index} run membership is invalid`)
   const status = trial['observation_status']
   if (status !== 'valid' && status !== 'invalid') throw new TypeError(`${label} trial ${index} observation is invalid`)
   return {
     trialId: string(trial['trial_id'], `${label} trial ${index} trial_id`),
-    runId: runId as HitchRunId,
+    ...(runId === undefined ? {} : { runId: runId as HitchRunId }),
+    ...(group === undefined ? {} : { group }),
+    ...(assessment === undefined ? {} : { assessment }),
+    ...(scores === undefined ? {} : { scores }),
     taskId: string(trial['task_id'], `${label} trial ${index} task_id`),
     attempt: positiveInteger(trial['attempt'], `${label} trial ${index} attempt`),
     observationStatus: status,
@@ -423,7 +438,7 @@ function parseTrial(value: unknown, index: number, label: string): EvalTrial {
 }
 
 function uniqueTrials(trials: readonly EvalTrial[], label: string): void {
-  if (new Set(trials.map(trial => trial.runId)).size !== trials.length
+  if (new Set(trials.map(trial => trial.runId ?? trial.group?.run_group_id)).size !== trials.length
     || new Set(trials.map(trial => trial.trialId)).size !== trials.length) {
     throw new TypeError(`${label} trial identities must be unique`)
   }
@@ -504,6 +519,9 @@ function trialIdentity(trial: EvalTrial): string {
   return canonicalJson({
     trialId: trial.trialId,
     runId: trial.runId,
+    group: trial.group,
+    assessment: trial.assessment,
+    scores: trial.scores,
     taskId: trial.taskId,
     attempt: trial.attempt,
     observationStatus: trial.observationStatus,
@@ -941,16 +959,25 @@ function verifyResultBundle(
   const { bundle_digest: _bundleDigest, created_at: _createdAt, ...identity } = index
   if (jsonDigest(identity) !== bundleDigest) throw new TypeError('Hitch result bundle digest mismatch')
 
-  const publicationPath = join(directory, 'eval', 'publication.json')
-  if (!existsSync(publicationPath)) throw new TypeError('Hitch eval run has no publication receipt')
-  const publication = object(json(publicationPath, 'Hitch eval publication'), 'Hitch eval publication')
-  if (publication['schema_version'] !== '1' || publication['eval_id'] !== ref.evalId
-    || !['settle', 'replace-invalid'].includes(String(publication['mode']))
-    || timestamp(publication['created_at']) === undefined) {
-    throw new TypeError('Hitch eval publication identity is invalid')
+  // Native candidate bundles predate grading. Their publication belongs to the
+  // assessment, while a regrade retains the original run's publication.
+  if (context['kind'] !== 'benchmark_phase') {
+    const published = readPublication(directory, ref)
+    if (trial.assessment === undefined) {
+      if (trialIdentity(published) !== trialIdentity(trial)) throw new TypeError('Hitch eval publication trial mismatch')
+    } else {
+      const original = object(manifest['observation'], 'Hitch source observation')
+      const expected = parseTrial({
+        trial_id: trial.trialId, run_id: trial.runId, task_id: trial.taskId, attempt: trial.attempt,
+        observation_status: original['status'], reward: original['reward'], invalid_reason: original['invalid_reason'],
+        verifier_result_ref: original['verifier_result_ref'],
+        ...(published.scores === undefined ? {} : { scores: readVerifierEvidence(directory,
+          typeof original['verifier_result_ref'] === 'string' ? original['verifier_result_ref'] : undefined,
+          finite(original['reward'], 'Hitch source reward'), published.scores).scores }),
+      }, 0, 'Hitch source publication')
+      if (trialIdentity(published) !== trialIdentity(expected)) throw new TypeError('Hitch source publication trial mismatch')
+    }
   }
-  const publicationTrial = parseTrial(publication['trial'], 0, 'Hitch eval publication')
-  if (trialIdentity(publicationTrial) !== trialIdentity(trial)) throw new TypeError('Hitch eval publication trial mismatch')
 
   const executionEvidence = bundleExecutionEvidence(index)
   const capture = bundleCapture(index)
@@ -965,12 +992,26 @@ function verifyResultBundle(
   return projection
 }
 
+/** Publication can belong to an original run or to a native phase assessment. */
+function readPublication(directory: string, ref: RefinementEvaluationRef): EvalTrial {
+  const publicationPath = evidencePath(directory, 'eval/publication.json')
+  if (!existsSync(publicationPath)) throw new TypeError('Hitch eval run has no publication receipt')
+  const publication = object(json(publicationPath, 'Hitch eval publication'), 'Hitch eval publication')
+  if (publication['schema_version'] !== '1' || publication['eval_id'] !== ref.evalId
+    || !['settle', 'replace-invalid'].includes(String(publication['mode']))
+    || timestamp(publication['created_at']) === undefined) {
+    throw new TypeError('Hitch eval publication identity is invalid')
+  }
+  return parseTrial(publication['trial'], 0, 'Hitch eval publication')
+}
+
 /** Load and cross-check one run referenced by an eval trial. */
 function loadRun(
   root: string,
   ref: RefinementEvaluationRef,
-  trial: EvalTrial,
+  trial: EvalTrial & { runId: HitchRunId },
   bundleCache: Map<string, BundleProjection>,
+  assessed?: { observation: EvidenceObservation; directory: string; phase?: RefinementRunView['phase'] },
 ): LoadedRun {
   const directory = join(root, 'runs', trial.runId)
   const info = lstatSync(directory)
@@ -982,7 +1023,7 @@ function loadRun(
   if (manifest['sealed'] !== true) throw new TypeError('Hitch eval run is not sealed')
   const context = object(manifest['context'], 'Hitch run context')
   const parent = object(manifest['parent'], 'Hitch run parent')
-  if (context['kind'] !== 'benchmark_task'
+  if (context['kind'] !== (assessed?.phase ? 'benchmark_phase' : 'benchmark_task')
     || context['benchmark_id'] !== ref.benchmarkId
     || context['benchmark_revision'] !== ref.benchmarkRevision
     || context['task_id'] !== trial.taskId
@@ -996,7 +1037,7 @@ function loadRun(
   if (!['queued', 'preparing', 'running', 'succeeded', 'failed', 'timed_out', 'cancelled'].includes(execution)) {
     throw new TypeError('Hitch run status is invalid')
   }
-  const observation = manifest['observation'] === undefined ? undefined : object(manifest['observation'], 'Hitch run observation')
+  const observation: JsonRecord | undefined = assessed?.observation ?? (manifest['observation'] === undefined ? undefined : object(manifest['observation'], 'Hitch run observation'))
   if (trial.observationStatus === 'valid'
     && (observation?.['status'] !== 'valid' || observation['reward'] !== trial.reward)) {
     throw new TypeError('Hitch run valid observation differs from eval trial')
@@ -1013,6 +1054,9 @@ function loadRun(
   const protocol = object(manifest['protocol'], 'Hitch run protocol')
   const bundle = verifyResultBundle(directory, ref, trial, manifest, bundleCache)
   const trajectory = loadTrajectory(directory, trial.runId, manifest['trajectory_ref'], TERMINAL.has(execution))
+  const verifier = trial.observationStatus === 'valid'
+    ? readVerifierEvidence(assessed?.directory ?? directory, trial.verifierResultRef, trial.reward as number, trial.scores)
+    : undefined
   const trajectoryCorrupt = trajectory.availability === 'corrupt'
   const startedAt = timestamp(manifest['created_at'])
   const completedAt = timestamp(manifest['completed_at'])
@@ -1051,6 +1095,9 @@ function loadRun(
     protocolIdentity: canonicalJson(protocol),
     ...(bundle?.executionEvidence === undefined ? {} : { executionEvidence: bundle.executionEvidence }),
     ...(bundle?.capture === undefined ? {} : { capture: bundle.capture }),
+    ...(ref.conditionId === undefined ? {} : { aggregationIdentity: canonicalJson({ conditionId: ref.conditionId }) }),
+    ...(assessed?.phase ? { phase: assessed.phase } : {}),
+    ...(verifier ? { verifier } : {}),
     trajectory: {
       availability: trajectory.availability,
       hasCanonical: trajectory.canonical !== null,
@@ -1065,7 +1112,7 @@ function loadRun(
 
 /** Mean over valid, complete observations only. */
 function mean(runs: readonly RefinementRunView[]): number | null {
-  const values = runs.flatMap(run => run.integrity === 'valid' && run.observation.state === 'valid'
+  const values = uniqueTrialRuns(runs).flatMap(run => run.integrity === 'valid' && run.observation.state === 'valid'
     ? [run.observation.reward]
     : [])
   return values.length === 0 ? null : values.reduce((sum, value) => sum + value, 0) / values.length
@@ -1161,9 +1208,9 @@ export class HitchRefinementEvidenceProvider implements RefinementEvidenceProvid
     const diagnostics: RefinementFailure[] = membership.failure === undefined ? [] : [membership.failure]
     for (const trial of membership.trials) {
       try {
-        runs.push(loadRun(this.root, ref, trial, this.bundleCache).view)
+        runs.push(...this.loadTrial(ref, trial).map(run => run.view))
       } catch (error) {
-        diagnostics.push({ code: 'corrupt-run-link', message: `${trial.runId}: ${error instanceof Error ? error.message : String(error)}` })
+        diagnostics.push({ code: 'corrupt-run-link', message: `${trial.runId ?? trial.group?.run_group_id}: ${error instanceof Error ? error.message : String(error)}` })
       }
     }
     return {
@@ -1202,7 +1249,8 @@ export class HitchRefinementEvidenceProvider implements RefinementEvidenceProvid
         exclusions.push({ runId: run.id, code: 'task-identity-mismatch' })
         identityCompatible = false
       }
-      if (run.protocolIdentity !== referenceRun.protocolIdentity) {
+      const pairedReference = runs.find(other => other.candidateId === referenceCandidate && other.taskKey === run.taskKey)
+      if (comparisonProtocolIdentity(run) !== comparisonProtocolIdentity(pairedReference ?? referenceRun)) {
         exclusions.push({ runId: run.id, code: 'protocol-identity-mismatch' })
         identityCompatible = false
       }
@@ -1412,9 +1460,44 @@ export class HitchRefinementEvidenceProvider implements RefinementEvidenceProvid
     const directory = join(this.root, 'evals', ref.evalId)
     const membership = this.membership(directory, ref)
     if (membership === null) throw new RefinementProviderError('run-not-found', `eval "${ref.evalId}" has no published membership`)
-    const trial = membership.trials.find(item => item.runId === runId)
-    if (trial === undefined) throw new RefinementProviderError('run-not-found', `run "${runId}" was not found in eval membership`)
-    return loadRun(this.root, ref, trial, this.bundleCache)
+    for (const trial of membership.trials) {
+      if (trial.runId !== runId && trial.group === undefined) continue
+      const found = this.loadTrial(ref, trial).find(run => run.view.id === runId)
+      if (found) return found
+    }
+    throw new RefinementProviderError('run-not-found', `run "${runId}" was not found in eval membership`)
+  }
+
+  private loadTrial(ref: RefinementEvaluationRef, trial: EvalTrial): LoadedRun[] {
+    const assessment = trial.assessment ? readAssessment(this.root, ref.evalId, trial.assessment, trial) : undefined
+    if (!trial.group) {
+      if (!trial.runId) throw new TypeError('Hitch trial has no run')
+      if (trial.scores && !assessment) verifyBundle(this.root, trial.runId)
+      return [this.withPolicy(ref, loadRun(this.root, ref, { ...trial, runId: trial.runId }, this.bundleCache, assessment))]
+    }
+    if (!assessment) throw new TypeError('Hitch phase group has no assessment')
+    if (trialIdentity(readPublication(assessment.directory, ref)) !== trialIdentity(trial)) throw new TypeError('Hitch native assessment publication trial mismatch')
+    if (canonicalJson(assessment.record['scores']) !== canonicalJson(trial.scores)) throw new TypeError('Hitch native assessment score channels mismatch')
+    const group = readPhaseGroup(this.root, ref.evalId, trial.group)
+    if (group['trial_id'] !== trial.trialId || group['task_id'] !== trial.taskId || group['attempt'] !== trial.attempt
+      || group['benchmark_id'] !== ref.benchmarkId || group['benchmark_revision'] !== ref.benchmarkRevision
+      || ['benchmark_id', 'benchmark_revision', 'task_digest', 'verifier_identity'].some(k => group[k] !== assessment.record[k])) throw new TypeError('Hitch phase assessment ownership mismatch')
+    const runs = group.phases.map(phase => loadRun(this.root, ref, { ...trial, runId: phase.run_id as HitchRunId }, this.bundleCache, {
+      ...assessment, phase: { groupId: trial.group!.run_group_id, index: phase.phase_index, count: group.phases.length },
+    }))
+    if (runs.some(run => run.view.integrity !== 'valid' || run.trajectory.availability !== 'available')) throw new TypeError('Hitch phase group contains incomplete trajectory evidence')
+    return runs.map(run => this.withPolicy(ref, run))
+  }
+
+  private withPolicy(ref: RefinementEvaluationRef, run: LoadedRun): LoadedRun {
+    if (ref.conditionId !== undefined) return run
+    const path = join(this.root, 'evals', ref.evalId, 'request.json')
+    if (!existsSync(path)) return run
+    const request = object(json(path, 'Hitch eval request'), 'Hitch eval request')
+    if (request['benchmark_id'] !== ref.benchmarkId || request['benchmark_revision'] !== ref.benchmarkRevision) throw new TypeError('Hitch request benchmark identity mismatch')
+    if (typeof request['timeout_ms'] !== 'number' || !Number.isSafeInteger(request['timeout_ms']) || request['timeout_ms'] < 0) return run
+    const policy = { timeout_ms: request['timeout_ms'], backend: request['backend'], agent_args: request['agent_args'] }
+    return { ...run, view: { ...run.view, aggregationIdentity: canonicalJson({ evaluationPolicy: createHash('sha256').update(canonicalJson(policy)).digest('hex') }) } }
   }
 
   /** Fit one checksum-validated file page inside the configured complete JSON response bound. */

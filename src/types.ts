@@ -5,6 +5,7 @@
 
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { SessionHeader, SessionId } from '@deepseek-ai/dsh-session/types'
+import type { VerifierEvidence } from './hitch-evidence.ts'
 
 /** Identifies one Gear evolution projected into the Rear view. */
 export type RefinementId = Branded<'RefinementId'>
@@ -67,6 +68,8 @@ export interface RefinementEvaluationRef {
   readonly requestedModelId: string
   readonly benchmarkId: string
   readonly benchmarkRevision: string
+  /** Gear's persisted evaluation condition, excluding per-run remaining budgets. */
+  readonly conditionId?: string
   /** Gear currently owns an explicit task-level rerun for this eval. */
   readonly rerunning?: true
   /** Present only when Gear authoritatively recorded this as failed evaluation evidence. */
@@ -168,6 +171,11 @@ export interface RefinementRunView {
       readonly status: 'applied' | 'not-needed' | 'failed'
     }
   }
+  /** Stable evaluation policy used for cross-task aggregation; raw protocol is retained above. */
+  readonly aggregationIdentity?: string
+  /** A whole trial is scored once, even when it contains several conversations. */
+  readonly phase?: { readonly groupId: string; readonly index: number; readonly count: number }
+  readonly verifier?: VerifierEvidence
   readonly trajectory: {
     readonly availability: 'available' | 'provider-only' | 'pending' | 'missing' | 'corrupt' | 'unsupported'
     readonly hasCanonical: boolean
@@ -324,6 +332,19 @@ export interface RefinementEvaluationRequest extends RefinementGetRequest {
 export interface RefinementTrajectoryRequest extends RefinementGetRequest {
   readonly runId: HitchRunId
 }
+
+/** Lossless UTF-8 fragments allow even a single large event to cross bounded RPCs. */
+export interface RefinementTrajectoryPageRequest extends RefinementTrajectoryRequest {
+  readonly cursor: string | null
+}
+export interface RefinementTrajectoryPage {
+  readonly runId: HitchRunId
+  readonly sha256: string
+  readonly totalBytes: number
+  readonly content: string
+  readonly nextCursor: string | null
+}
+export type RefinementTrajectoryPageResult = RefinementSuccess<RefinementTrajectoryPage> | RefinementRejected
 
 /** Bounded provider evidence request for one referenced run. */
 export interface RefinementProviderEvidenceRequest extends RefinementTrajectoryRequest {

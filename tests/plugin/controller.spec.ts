@@ -264,7 +264,7 @@ describe('RefinementController', () => {
     controller.dispose()
   })
 
-  it('opens a trajectory comparison from runs in different iterations', async () => {
+  it('opens different iterations under one persisted policy and reassembles bounded trajectories', async () => {
     const candidateId = 'candidate-cross-iteration' as RefinementCandidateId
     const firstIterationId = 'iteration-cross-1' as RefinementIterationId
     const secondIterationId = 'iteration-cross-2' as RefinementIterationId
@@ -333,7 +333,8 @@ describe('RefinementController', () => {
                 revisionIdentity: first ? 'revision-a' : 'revision-b',
               },
               model: { requestedId: 'model-a', provider: 'test', effectiveId: 'model-a' },
-              protocolIdentity: 'protocol-a',
+              protocolIdentity: JSON.stringify({ timeout_ms: first ? 599449 : 599404 }),
+              aggregationIdentity: 'same-evaluation-policy',
               trajectory: { availability: 'available' as const, hasCanonical: true, providerFileCount: 0 },
             }],
             diagnostics: [],
@@ -348,6 +349,12 @@ describe('RefinementController', () => {
         },
       }
     })
+    client.trajectoryPage = vi.fn(async request => {
+      const source = JSON.stringify({ runId: request.runId, header: { type: 'session', version: 0, id: 'test', createdAt: 1 }, records: [] })
+      const offset = request.cursor === null ? 0 : Number(request.cursor)
+      const end = Math.min(source.length, offset + 30)
+      return { ok: true as const, value: { runId: request.runId, sha256: 'fixed-snapshot', totalBytes: source.length, content: source.slice(offset, end), nextCursor: end === source.length ? null : String(end) } }
+    })
     const controller = new RefinementController(client, SID)
     await controller.ensure()
     await vi.waitFor(() => {
@@ -358,6 +365,16 @@ describe('RefinementController', () => {
       level: 'comparison',
       selectedTaskKey: 'task-key-a',
       selectedRunIds: [firstRunId, secondRunId],
+      trajectories: { [firstRunId]: { runId: firstRunId, records: [] }, [secondRunId]: { runId: secondRunId, records: [] } },
+    })
+    client.trajectoryPage = vi.fn(async request => ({ ok: true as const, value: {
+      runId: request.runId, sha256: request.cursor === null ? 'first-snapshot' : 'changed-snapshot',
+      totalBytes: 100, content: 'x', nextCursor: 'next',
+    } }))
+    await controller.selectRuns([firstRunId])
+    expect(controller.getSnapshot()).toMatchObject({ error: null,
+      trajectories: { [firstRunId]: null },
+      trajectoryErrors: { [firstRunId]: 'Canonical trajectory pages disagree' },
     })
     controller.dispose()
   })

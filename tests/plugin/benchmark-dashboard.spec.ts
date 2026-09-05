@@ -89,6 +89,27 @@ function validRun(taskId: string, reward: number, initialWorkspaceDigest: string
 }
 
 describe('benchmark portfolio dashboard', () => {
+  it('groups remaining time budgets by persisted conditions and keeps different conditions separate', () => {
+    const runs = [1, 2, 3].map(n => ({ ...validRun(`task-${n}`, n === 1 ? 1 : 0, `workspace-${n}`),
+      aggregationIdentity: 'condition-a', protocolIdentity: JSON.stringify({ timeout_ms: 600000 - n }),
+    }))
+    const evaluation = { evaluations: [{ ref: { benchmarkId: 'bench', benchmarkRevision: 'revision' }, status: 'succeeded', plannedTasks: 3, runs }] } as unknown as RefinementEvaluationView
+    expect(combinationScores(iterationId, evaluation)).toMatchObject([{ taskCount: 3, plannedTaskCount: 3, provisional: false, mean: 1 / 3 }])
+    runs[2]!.aggregationIdentity = 'condition-b'
+    expect(combinationScores(iterationId, evaluation)).toHaveLength(2)
+  })
+
+  it('weights tasks equally and counts each phase group once for total and process scores', () => {
+    const phase = { ...validRun('task-1', 1, 'workspace'), aggregationIdentity: 'condition', verifier: { scores: { total_score: 1, process_score: 0.5, normalization: 'standard' as const } } }
+    const runs = [
+      { ...phase, id: 'phase-1' as HitchRunId, phase: { groupId: 'group', index: 1, count: 2 } },
+      { ...phase, id: 'phase-2' as HitchRunId, phase: { groupId: 'group', index: 2, count: 2 } },
+      { ...phase, id: 'attempt-2' as HitchRunId, trialId: 'second-attempt', attempt: 2, observation: { state: 'valid' as const, reward: 0 }, verifier: { scores: { total_score: 0, process_score: 0, normalization: 'standard' as const } } },
+      { ...validRun('task-2', 0, 'workspace-2'), aggregationIdentity: 'condition' },
+    ]
+    const evaluation = { evaluations: [{ ref: { benchmarkId: 'bench', benchmarkRevision: 'revision' }, status: 'succeeded', plannedTasks: 2, runs }] } as unknown as RefinementEvaluationView
+    expect(combinationScores(iterationId, evaluation)).toMatchObject([{ taskCount: 2, mean: 0.25, processMean: 0.25, processTaskCount: 1, provisional: false }])
+  })
   it('never promotes valid observations carried by failed Gear evaluation evidence', () => {
     const runId = 'run_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' as HitchRunId
     const evaluation: RefinementEvaluationView = {

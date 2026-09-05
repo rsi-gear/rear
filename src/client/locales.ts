@@ -1,5 +1,6 @@
 /** Refinement workbench copy keys. */
 export type RefinementKey =
+  | 'score.process' | 'score.total' | 'score.details' | 'score.components' | 'score.feedback' | 'trajectory.phase'
   | 'view.refinement' | 'empty.title' | 'empty.body' | 'loading' | 'unknown'
   | 'overview.title' | 'evaluation.title' | 'comparison.title' | 'back'
   | 'evaluation.failedEvidence' | 'evaluation.phase' | 'evaluation.progress'
@@ -44,6 +45,8 @@ export type RefinementKey =
 
 /** English refinement workbench dictionary. */
 export const en: Record<RefinementKey, string> = {
+  'score.process': 'Process score', 'score.total': 'Total score', 'score.details': 'Verifier evidence',
+  'score.components': 'Components', 'score.feedback': 'Feedback', 'trajectory.phase': 'Phase',
   'view.refinement': 'Refine',
   'empty.title': 'No Gear evolutions yet',
   'empty.body': 'No persisted experiments were found under the configured Gear state root.',
@@ -123,6 +126,8 @@ export const en: Record<RefinementKey, string> = {
 
 /** Simplified Chinese refinement workbench dictionary. */
 export const zh: Record<RefinementKey, string> = {
+  'score.process': '过程分', 'score.total': '总分', 'score.details': '评分证据',
+  'score.components': '评分项目', 'score.feedback': '反馈', 'trajectory.phase': '阶段',
   'view.refinement': '优化',
   'empty.title': '暂无 Gear 实验',
   'empty.body': '配置的 Gear 状态目录中暂无已落盘实验。',

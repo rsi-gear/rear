@@ -5,6 +5,7 @@ import type {
   RefinementIterationId,
   RefinementIterationRecord,
 } from '../types.ts'
+import { runAggregationIdentity } from '../run-scoring.ts'
 
 /** Raw reward decrease that fails the default per-benchmark guardrail. */
 export const BENCHMARK_REGRESSION_GUARDRAIL = 0.01
@@ -26,6 +27,8 @@ export interface BenchmarkCombinationScore {
   readonly evaluationIds: readonly string[]
   readonly runIds: readonly string[]
   readonly mean: number
+  readonly processMean?: number
+  readonly processTaskCount?: number
   readonly meanDurationMs: number | null
   readonly taskCount: number
   readonly plannedTaskCount: number | null
@@ -71,6 +74,8 @@ export function combinationScores(
     evaluationIds: Set<string>
     runIds: Set<string>
     tasks: Map<string, number[]>
+    processTasks: Map<string, number[]>
+    trials: Set<string>
     plannedTaskCounts: number[]
     durations: number[]
     runCount: number
@@ -81,7 +86,7 @@ export function combinationScores(
     for (const run of item.runs) {
       if (run.integrity !== 'valid' || run.observation.state !== 'valid') continue
       const modelId = run.model.effectiveId ?? run.model.requestedId
-      const protocolIdentity = aggregationProtocolIdentity(run.protocolIdentity)
+      const protocolIdentity = runAggregationIdentity(run)
       const key = [
         run.candidateId,
         item.ref.benchmarkId,
@@ -106,14 +111,26 @@ export function combinationScores(
         evaluationIds: new Set<string>(),
         runIds: new Set<string>(),
         tasks: new Map<string, number[]>(),
+        processTasks: new Map<string, number[]>(),
+        trials: new Set<string>(),
         plannedTaskCounts: [],
         durations: [],
         runCount: 0,
         running: false,
       }
-      const rewards = group.tasks.get(run.taskKey) ?? []
-      rewards.push(run.observation.reward)
-      group.tasks.set(run.taskKey, rewards)
+      const trialKey = `${run.evalId}\0${run.trialId}`
+      if (!group.trials.has(trialKey)) {
+        const rewards = group.tasks.get(run.taskKey) ?? []
+        rewards.push(run.observation.reward)
+        group.tasks.set(run.taskKey, rewards)
+        const processScore = run.verifier?.scores.process_score
+        if (processScore !== undefined) {
+          const processes = group.processTasks.get(run.taskKey) ?? []
+          processes.push(processScore)
+          group.processTasks.set(run.taskKey, processes)
+        }
+        group.trials.add(trialKey)
+      }
       group.evaluationIds.add(String(run.evalId))
       group.runIds.add(String(run.id))
       if (item.plannedTasks !== null) group.plannedTaskCounts.push(item.plannedTasks)
@@ -127,6 +144,7 @@ export function combinationScores(
   }
   return [...groups.entries()].flatMap(([key, group]) => {
     const taskMeans = [...group.tasks.values()].map(rewards => rewards.reduce((sum, value) => sum + value, 0) / rewards.length)
+    const processMeans = [...group.processTasks.values()].map(scores => scores.reduce((sum, value) => sum + value, 0) / scores.length)
     if (taskMeans.length === 0) return []
     const plannedTaskCount = group.plannedTaskCounts.length === 0 ? null : Math.max(...group.plannedTaskCounts)
     return [{
@@ -145,6 +163,7 @@ export function combinationScores(
       evaluationIds: [...group.evaluationIds].sort(),
       runIds: [...group.runIds].sort(),
       mean: taskMeans.reduce((sum, value) => sum + value, 0) / taskMeans.length,
+      ...(processMeans.length ? { processMean: processMeans.reduce((s, v) => s + v, 0) / processMeans.length, processTaskCount: processMeans.length } : {}),
       meanDurationMs: group.durations.length === 0
         ? null
         : group.durations.reduce((sum, value) => sum + value, 0) / group.durations.length,

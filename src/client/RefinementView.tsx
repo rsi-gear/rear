@@ -1,3 +1,5 @@
+import { runAggregationIdentity } from '../run-scoring.ts'
+import { VerifierEvidenceView } from './VerifierEvidenceView.tsx'
 import { useEffect } from 'react'
 import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ConvViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
@@ -15,9 +17,6 @@ import {
 } from './DshOfflineTrajectorySurface.tsx'
 import { ExperimentTablesView, experimentHistoryRuns } from './ExperimentTablesView.tsx'
 import { experimentCombinationTable } from './experiment-tables.ts'
-import {
-  aggregationProtocolIdentity,
-} from './benchmark-dashboard.ts'
 
 const css = {
   root: 'rear-refinement-root', header: 'rear-refinement-header', list: 'rear-refinement-list',
@@ -153,6 +152,7 @@ function TrajectoryLane({
             {shortVersion(run.harness.revisionIdentity ?? run.harness.requestedRef, ENGLISH_T('unknown'))}
           </span>
           <span className={css.pill}>#{run.attempt}</span>
+          {run.phase && <span className={css.pill}>{ENGLISH_T('trajectory.phase')} {run.phase.index}/{run.phase.count}</span>}
         </div>
         <span>{run.model.effectiveId ?? run.model.requestedId}</span>
         <div className={css.facts}>
@@ -208,6 +208,7 @@ function TrajectoryLane({
         )}
       </div>
       <div className={css.laneBody}>
+        <VerifierEvidenceView run={run} t={ENGLISH_T} />
         {raw !== null && (
           <div>
             <pre className={css.raw}>{raw.content}</pre>
@@ -429,7 +430,7 @@ export function RefinementView({
     const run = runById.get(id)
     return run === undefined ? [] : [run]
   })
-  const selectedProtocols = new Set(selectedRuns.map(run => aggregationProtocolIdentity(run.protocolIdentity)))
+  const selectedProtocols = new Set(selectedRuns.map(run => runAggregationIdentity(run)))
   const selectedHarnesses = new Set(selectedRuns.map(run => `${run.harness.id}\u0000${run.harness.revisionIdentity ?? ''}`))
   const selectedModels = new Set(selectedRuns.map(run => `${run.model.provider ?? ''}\u0000${run.model.effectiveId ?? run.model.requestedId}`))
   const matchesFixedDimension = (run: RefinementRunView): boolean => {
@@ -441,7 +442,7 @@ export function RefinementView({
     return selectedHarnesses.has(harness) || selectedModels.has(model)
   }
   const selectableRuns = allRuns.filter(run => run.taskKey === state.selectedTaskKey
-    && (selectedProtocols.size === 0 || selectedProtocols.has(aggregationProtocolIdentity(run.protocolIdentity)))
+    && (selectedProtocols.size === 0 || selectedProtocols.has(runAggregationIdentity(run)))
     && matchesFixedDimension(run)
     && (run.trajectory.availability === 'available' || run.trajectory.availability === 'provider-only'))
     .sort((left, right) => left.harness.id.localeCompare(right.harness.id) || left.attempt - right.attempt)
