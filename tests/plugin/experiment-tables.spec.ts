@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import type {
   HitchEvalId,
   HitchRunId,
@@ -9,12 +11,17 @@ import type {
   RefinementIterationId,
   RefinementIterationRecord,
   RefinementRunView,
+  RefinementRecordV1,
 } from '../../src/types.ts'
 import { benchmarkKey } from '../../src/client/benchmark-dashboard.ts'
 import {
   experimentCombinationTable,
   experimentTaskMatrix,
+  experimentBenchmarkSelection,
+  activeExperimentEvaluations,
 } from '../../src/client/experiment-tables.ts'
+import { ExperimentTablesView } from '../../src/client/ExperimentTablesView.tsx'
+import { zh } from '../../src/client/locales.ts'
 
 const candidateId = 'candidate-table' as RefinementCandidateId
 const candidate: RefinementCandidateRecord = {
@@ -108,6 +115,106 @@ function projection(
 }
 
 describe('experiment detail tables', () => {
+  function splitEvaluation(id: string, partition: 'train' | 'test', owner = candidateId): RefinementEvaluationProjection {
+    const source = projection(id, [[`${partition}-a`, 1], [`${partition}-b`, 0]], owner).evaluations[0]!
+    return { ...source, ref: { ...source.ref, partition, planIdentity: 'train-and-test-plan',
+      conditionId: `condition-${partition}`, benchmarkRevision: `revision-${partition}` },
+    runs: source.runs.map(run => ({ ...run, aggregationIdentity: JSON.stringify({ conditionId: `condition-${partition}` }) })) }
+  }
+
+  it('combines train/test from one Gear plan and keeps the complete owner of a reused baseline', () => {
+    const old = iteration('old-round', 2)
+    const current = iteration('current-round', 3, 'Candidate-only improvement')
+    const optimized = { ...candidate, id: 'optimized' as RefinementCandidateId, role: 'candidate' as const }
+    const baselineTrain = splitEvaluation('baseline-train', 'train')
+    const history = {
+      [old.id]: { ...projection('old', []), evaluations: [baselineTrain] },
+      [current.id]: { ...projection('current', []), evaluations: [baselineTrain,
+        splitEvaluation('baseline-test', 'test'), splitEvaluation('candidate-train', 'train', optimized.id),
+        splitEvaluation('candidate-test', 'test', optimized.id)] },
+    }
+    const table = experimentCombinationTable([old, current], [candidate, optimized], candidateId, history)
+    expect(table.benchmarks.map(item => item.partition)).toEqual(['train', 'test'])
+    expect(table.rows).toHaveLength(2)
+    expect(table.rows.every(row => row.iterationOrdinal === 3 && row.status === 'complete' && row.coverageCompleted === 2)).toBe(true)
+    expect(table.rows.find(row => row.candidateRole === 'baseline')?.directionSummary).toBeNull()
+    for (const benchmark of table.benchmarks) {
+      const matrix = experimentTaskMatrix(table, history, benchmark.key, table.rows.map(row => row.key))
+      expect(matrix.columns.map(row => row.candidateRole)).toEqual(['baseline', 'candidate'])
+      expect(matrix.rows).toHaveLength(2)
+      expect(matrix.rows.every(row => row.cells.length === 2 && row.taskId.startsWith(benchmark.partition!))).toBe(true)
+      expect(new Set(matrix.rows.flatMap(row => row.cells.flatMap(cell => cell.selectableRunIds))).size).toBe(4)
+    }
+    const html = renderToStaticMarkup(createElement(ExperimentTablesView, {
+      detail: { id: 'experiment', iterations: [old, current], candidates: [candidate, optimized], baselineCandidateId: candidateId } as unknown as RefinementRecordV1,
+      evaluationHistory: history, onSelectRuns: async () => {}, t: key => zh[key],
+    }))
+    expect(html).toContain('迭代 03 · 基线')
+    expect(html).toContain('迭代 03 · 候选')
+    expect(html).not.toContain('迭代 02')
+    expect(html).toContain('benchmark-a · 训练集')
+    expect(html).toContain('benchmark-a · 测试集')
+  })
+
+  it('preserves distinct protocol rows when there is no authoritative shared Gear plan', () => {
+    const current = iteration('protocols', 1)
+    const first = projection('one-protocol', [['task-a', 1]])
+    const second = projection('other-protocol', [['task-a', 0]])
+    const history = { [current.id]: { ...first, evaluations: [...first.evaluations,
+      ...second.evaluations.map(evaluation => ({ ...evaluation, runs: evaluation.runs.map(run => ({ ...run, protocolIdentity: '{"timeout_ms":2000}' })) }))] } }
+    const table = experimentCombinationTable([current], [candidate], candidateId, history)
+    expect(table.rows).toHaveLength(2)
+    const matrix = experimentTaskMatrix(table, history, table.benchmarks[0]!.key, table.rows.map(row => row.key))
+    expect(matrix.rows[0]?.cells.map(cell => cell.mean).sort()).toEqual([0, 1])
+    expect(matrix.rows[0]?.cells.every(cell => cell.runs.length === 1)).toBe(true)
+  })
+
+  it('automatically selects a shared benchmark and preserves a valid manual selection', () => {
+    const first = iteration('both-splits', 1)
+    const second = iteration('test-only', 2)
+    const history = {
+      [first.id]: { ...projection('first', []), evaluations: [splitEvaluation('one-train', 'train'), splitEvaluation('one-test', 'test')] },
+      [second.id]: { ...projection('second', []), evaluations: [splitEvaluation('two-test', 'test')] },
+    }
+    const table = experimentCombinationTable([first, second], [candidate], candidateId, history)
+    const train = table.benchmarks[0]!.key
+    const test = table.benchmarks[1]!.key
+    const selected = table.rows.map(row => row.key)
+    const choice = experimentBenchmarkSelection(table, selected, train)
+    expect(choice).toMatchObject({ activeKey: test, shared: true })
+    expect(choice.benchmarks).toHaveLength(1)
+    expect(experimentTaskMatrix(table, history, choice.activeKey, selected).columns).toHaveLength(2)
+    expect(experimentBenchmarkSelection(table, [table.rows.find(row => row.iterationId === first.id)!.key], test).activeKey).toBe(test)
+    expect(experimentBenchmarkSelection(table, selected, 'stale-key').activeKey).toBe(test)
+  })
+
+  it('keeps both selected columns with explicit gaps when benchmarks do not overlap', () => {
+    const first = iteration('train-only', 1)
+    const second = iteration('test-only', 2)
+    const history = {
+      [first.id]: { ...projection('first', []), evaluations: [splitEvaluation('one-train', 'train')] },
+      [second.id]: { ...projection('second', []), evaluations: [splitEvaluation('two-test', 'test')] },
+    }
+    const table = experimentCombinationTable([first, second], [candidate], candidateId, history)
+    const selected = table.rows.map(row => row.key)
+    const choice = experimentBenchmarkSelection(table, selected, null)
+    expect(choice.shared).toBe(false)
+    const matrix = experimentTaskMatrix(table, history, choice.activeKey, selected)
+    expect(matrix.columns).toHaveLength(2)
+    expect(matrix.rows.every(row => row.cells[1]?.mean === null)).toBe(true)
+  })
+
+  it('only shows live progress, deduplicates reused evals and excludes interrupted evidence', () => {
+    const completed = splitEvaluation('completed', 'train')
+    const running = { ...splitEvaluation('running', 'test'), status: 'running' as const, settledTasks: 1 }
+    const interrupted = { ...running, ref: { ...running.ref, evalId: 'eval-interrupted' as HitchEvalId,
+      failedEvaluation: { phase: 'seed-baseline', code: 'interrupted', message: 'interrupted' } } }
+    const history = { a: { ...projection('a', []), evaluations: [completed, running, interrupted] },
+      b: { ...projection('b', []), evaluations: [running] } }
+    expect(activeExperimentEvaluations(history)).toEqual([running])
+    expect(activeExperimentEvaluations({ a: { ...projection('a', []), evaluations: [completed] } })).toEqual([])
+  })
+
   it('keeps repeated Harness/Model evaluations in separate iteration rows', () => {
     const first = iteration('iteration-1', 1, 'Reduce unnecessary tool calls')
     const second = iteration('iteration-2', 2, 'Improve repository inspection')
@@ -115,7 +222,7 @@ describe('experiment detail tables', () => {
       [first.id]: projection('one', [['task-a', 1], ['task-b', 0]]),
       [second.id]: projection('two', [['task-a', 1], ['task-b', 1]]),
     }
-    const table = experimentCombinationTable([first, second], [candidate], candidateId, history)
+    const table = experimentCombinationTable([first, second], [{ ...candidate, role: 'candidate' }], candidateId, history)
     const matrix = experimentTaskMatrix(
       table,
       history,
@@ -317,5 +424,68 @@ describe('experiment detail tables', () => {
     expect(table.rows).toHaveLength(1)
     expect(table.rows[0]?.candidateId).toBe(candidateId)
     expect(table.rows.some(row => row.candidateId === failedCandidateId)).toBe(false)
+  })
+
+  it.each(['running', 'failed'] as const)('keeps completed trajectories selectable after Gear interrupts a %s Hitch eval', status => {
+    const current = { ...iteration('interrupted', 1), status: 'failed' as const }
+    const source = projection('interrupted', [['task-a', 1], ['task-b', 0]])
+    const interrupted: RefinementEvaluationView = {
+      ...source,
+      evaluations: source.evaluations.map(evaluation => ({
+        ...evaluation, status, plannedTasks: 80,
+        ref: { ...evaluation.ref, failedEvaluation: {
+          phase: 'seed-baseline', code: 'evaluation_interrupted_by_restart', message: 'control plane restarted',
+        } },
+        runs: evaluation.runs.map((run, index) => index === 0 ? run : {
+          ...run, observation: { state: 'invalid' as const, reason: 'verifier timeout' },
+        }),
+      })),
+    }
+    const history = { [current.id]: interrupted }
+    const table = experimentCombinationTable([current], [candidate], candidateId, history)
+    expect(table.rows).toHaveLength(1)
+    expect(table.rows[0]).toMatchObject({ status: 'unscored', meanScore: null, meanDelta: null, coverageCompleted: 1, coverageTotal: 80 })
+    expect(table.leadingRow).toBeNull()
+    expect(table.rows[0]?.cells[0]).toMatchObject({ score: null, failure: 'control plane restarted', evaluationIds: ['eval-interrupted'] })
+    const matrix = experimentTaskMatrix(table, history, table.benchmarks[0]!.key, [table.rows[0]!.key])
+    expect(matrix.rows).toHaveLength(2)
+    expect(matrix.rows.flatMap(row => row.cells.flatMap(cell => cell.selectableRunIds))).toEqual(['run-interrupted-0', 'run-interrupted-1'])
+    expect(matrix.rows.map(row => row.cells[0]?.mean)).toEqual([1, null])
+  })
+
+  it('exposes retained trajectories even when no task has a valid verifier score', () => {
+    const current = iteration('verifier-failed', 1)
+    const source = projection('verifier-failed', [['task-a', 0]])
+    const history = { [current.id]: {
+      ...source,
+      evaluations: source.evaluations.map(evaluation => ({
+        ...evaluation, status: 'failed' as const,
+        runs: evaluation.runs.map(run => ({ ...run, observation: { state: 'invalid' as const, reason: 'verifier timeout' } })),
+      })),
+    } }
+    const table = experimentCombinationTable([current], [candidate], candidateId, history)
+    expect(table.rows[0]).toMatchObject({ status: 'unscored', meanScore: null })
+    expect(table.leadingRow).toBeNull()
+    const matrix = experimentTaskMatrix(table, history, table.benchmarks[0]!.key, [table.rows[0]!.key])
+    expect(matrix.rows[0]?.cells[0]).toMatchObject({ mean: null, selectableRunIds: ['run-verifier-failed-0'] })
+  })
+
+  it('retains failed-eval trajectories alongside scored evidence without changing the accepted averages', () => {
+    const current = iteration('mixed', 1)
+    const scored = projection('scored', [['task-a', 0], ['task-b', 0]])
+    const failed = projection('failed', [['task-a', 1], ['task-b', 1]])
+    const history = { [current.id]: {
+      ...scored,
+      evaluations: [...scored.evaluations, ...failed.evaluations.map(evaluation => ({
+        ...evaluation, status: 'failed' as const,
+        ref: { ...evaluation.ref, failedEvaluation: { phase: 'seed-baseline', code: 'interrupted', message: 'interrupted' } },
+      }))],
+    } }
+    const table = experimentCombinationTable([current], [candidate], candidateId, history)
+    expect(table.rows).toHaveLength(1)
+    expect(table.leadingRow?.meanScore).toBe(0)
+    const matrix = experimentTaskMatrix(table, history, table.benchmarks[0]!.key, [table.rows[0]!.key])
+    expect(matrix.rows.map(row => row.cells[0]?.mean)).toEqual([0, 0])
+    expect(matrix.rows.every(row => row.cells[0]?.selectableRunIds.length === 2)).toBe(true)
   })
 })

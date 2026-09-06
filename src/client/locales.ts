@@ -31,12 +31,12 @@ export type RefinementKey =
   | 'table.combinationTitle' | 'table.combinationHint' | 'table.taskTitle' | 'table.taskHint'
   | 'table.rank' | 'table.iterationDirection' | 'table.noDirection' | 'table.coverage'
   | 'table.benchmark' | 'table.harnessFilter'
-  | 'table.modelFilter' | 'table.all' | 'table.statusComplete' | 'table.statusProvisional'
+  | 'table.modelFilter' | 'table.all' | 'table.statusComplete' | 'table.statusProvisional' | 'table.statusUnscored'
   | 'table.selectIteration'
   | 'table.chooseIterations' | 'table.copy' | 'table.fullInfo' | 'table.close'
   | 'table.selectedTrajectories' | 'table.enterComparison' | 'table.chooseAttempt'
   | 'table.noMatchingCombinations' | 'table.selectionHelp' | 'table.candidate'
-  | 'table.noTaskData'
+  | 'table.noTaskData' | 'table.train' | 'table.test' | 'table.noSharedBenchmark'
   | 'status.queued' | 'status.preparing' | 'status.evaluating' | 'status.settled'
   | 'status.running' | 'status.rerunning' | 'status.awaitingReview' | 'status.completed' | 'status.succeeded'
   | 'status.failed' | 'status.timedOut' | 'status.cancelled' | 'status.corrupt'
@@ -99,15 +99,16 @@ export const en: Record<RefinementKey, string> = {
   'capture.interactions': 'Interactions', 'capture.redaction': 'Redaction',
   'trajectory.empty': 'No canonical trajectory events',
   'table.combinationTitle': 'Benchmark combinations',
-  'table.combinationHint': 'Scored combinations across iterations, ranked by complete equal-weight score',
+  'table.combinationHint': 'Scores and retained trajectories across iterations; incomplete evaluations remain available for inspection',
   'table.taskTitle': 'Task comparison',
   'table.taskHint': 'Check iterations in the Benchmark table to show each Task score here',
   'table.rank': 'Rank', 'table.iterationDirection': 'Iteration / direction',
   'table.noDirection': 'No direction summary', 'table.coverage': 'Coverage',
   'table.benchmark': 'Benchmark', 'table.harnessFilter': 'Harness', 'table.modelFilter': 'Model',
   'table.all': 'All', 'table.statusComplete': 'Complete', 'table.statusProvisional': 'Provisional',
+  'table.statusUnscored': 'No complete score',
   'table.selectIteration': 'Select',
-  'table.chooseIterations': 'Check one or more scored iterations in the Benchmark table.',
+  'table.chooseIterations': 'Check one or more iterations in the Benchmark table to inspect their tasks and trajectories.',
   'table.copy': 'Copy', 'table.fullInfo': 'Full information', 'table.close': 'Close',
   'table.selectedTrajectories': 'trajectories selected',
   'table.enterComparison': 'Open trajectory comparison', 'table.chooseAttempt': 'Choose attempt',
@@ -115,6 +116,8 @@ export const en: Record<RefinementKey, string> = {
   'table.selectionHelp': 'Select 1–4 trajectories from the same task row.',
   'table.candidate': 'Candidate',
   'table.noTaskData': 'No task data',
+  'table.train': 'Train', 'table.test': 'Test',
+  'table.noSharedBenchmark': 'These selections have no shared benchmark. Missing results are shown as —.',
   'status.queued': 'Queued', 'status.preparing': 'Preparing', 'status.evaluating': 'Evaluating',
   'status.settled': 'Settled', 'status.running': 'Running', 'status.rerunning': 'Rerunning', 'status.awaitingReview': 'Awaiting review',
   'status.completed': 'Completed', 'status.succeeded': 'Succeeded', 'status.failed': 'Failed',
@@ -180,15 +183,16 @@ export const zh: Record<RefinementKey, string> = {
   'capture.interactions': '交互数', 'capture.redaction': '脱敏',
   'trajectory.empty': '没有可显示的规范化轨迹事件',
   'table.combinationTitle': 'Benchmark 组合表',
-  'table.combinationHint': '跨迭代展示有评分结果的组合，按完整结果的等权平均得分排序',
+  'table.combinationHint': '跨迭代展示得分和已有轨迹，未完成的评测也可查看',
   'table.taskTitle': 'Task 对比表',
   'table.taskHint': '在 Benchmark 表勾选迭代后，在这里展示各 Task 的得分',
   'table.rank': '排名', 'table.iterationDirection': '迭代 / 方向',
   'table.noDirection': '暂无方向摘要', 'table.coverage': '覆盖率',
   'table.benchmark': 'Benchmark', 'table.harnessFilter': 'Harness', 'table.modelFilter': '模型',
   'table.all': '全部', 'table.statusComplete': '完整', 'table.statusProvisional': '暂定',
+  'table.statusUnscored': '无完整评分',
   'table.selectIteration': '选择',
-  'table.chooseIterations': '请先在 Benchmark 表勾选一个或多个已评分迭代。',
+  'table.chooseIterations': '请先在 Benchmark 表勾选一个或多个迭代，查看已有任务和轨迹。',
   'table.copy': '复制', 'table.fullInfo': '完整信息', 'table.close': '关闭',
   'table.selectedTrajectories': '条轨迹已选择',
   'table.enterComparison': '进入轨迹对比', 'table.chooseAttempt': '选择尝试',
@@ -196,6 +200,8 @@ export const zh: Record<RefinementKey, string> = {
   'table.selectionHelp': '请在同一个 Task 行选择 1–4 条轨迹。',
   'table.candidate': '候选',
   'table.noTaskData': '暂无 Task 数据',
+  'table.train': '训练集', 'table.test': '测试集',
+  'table.noSharedBenchmark': '所选迭代没有共同的 benchmark，缺少的结果以 — 显示。',
   'status.queued': '排队中', 'status.preparing': '准备中', 'status.evaluating': '评测中',
   'status.settled': '已结算', 'status.running': '运行中', 'status.rerunning': '重跑中', 'status.awaitingReview': '等待审核',
   'status.completed': '已完成', 'status.succeeded': '成功', 'status.failed': '失败',

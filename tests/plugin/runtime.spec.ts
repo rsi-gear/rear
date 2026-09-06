@@ -453,7 +453,10 @@ describe('Gear-backed RefinementRuntime', () => {
         id: 'gear-candidate:candidate-1',
         directionSummary: 'Keep the final user workflow intact after verification.',
       }],
-      iterations: [{ id: value.roundId, evaluationRefs: [{ benchmarkId: 'gear-benchmark' }, { benchmarkId: 'gear-benchmark' }] }],
+      iterations: [{ id: value.roundId, evaluationRefs: [
+        { benchmarkId: 'gear-benchmark', partition: 'train', planIdentity: JSON.stringify({ seed: 'condition-1', heldOut: 'condition-held-out' }) },
+        { benchmarkId: 'gear-benchmark', partition: 'train', planIdentity: JSON.stringify({ seed: 'condition-1', heldOut: 'condition-held-out' }) },
+      ] }],
     })
     const evaluated = await value.ctx.refinements.evaluation({
       sessionId: value.sessionId,

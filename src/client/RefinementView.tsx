@@ -1,6 +1,6 @@
 import { runAggregationIdentity } from '../run-scoring.ts'
 import { VerifierEvidenceView } from './VerifierEvidenceView.tsx'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import type { InjectFace, PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ConvViewProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {
@@ -16,7 +16,7 @@ import {
   type DshTrajectoryBridge,
 } from './DshOfflineTrajectorySurface.tsx'
 import { ExperimentTablesView, experimentHistoryRuns } from './ExperimentTablesView.tsx'
-import { experimentCombinationTable } from './experiment-tables.ts'
+import { activeExperimentEvaluations, experimentCombinationTable } from './experiment-tables.ts'
 
 const css = {
   root: 'rear-refinement-root', header: 'rear-refinement-header', list: 'rear-refinement-list',
@@ -244,7 +244,9 @@ export function RefinementView({
   loadProviderEvidence, closeProviderEvidence, loadInteractionEvidence, closeInteractionEvidence, dshTrajectory, t,
 }: ViewProps) {
   const state = useRefinement(value => value)
+  const [dismissedEvaluations, setDismissedEvaluations] = useState<readonly string[]>([])
   useEffect(() => { void ensure() }, [ensure])
+  useEffect(() => { setDismissedEvaluations([]) }, [state.detail?.id])
 
   if (state.status === 'cold' || (state.status === 'loading' && state.detail === null)) {
     return <main className={css.root}><div className={css.empty}>{t('loading')}</div></main>
@@ -406,12 +408,13 @@ export function RefinementView({
         </header>
         {state.error !== null && <p className={css.error}>{state.error}</p>}
         {detail.failure !== undefined && <p className={css.error}>{detail.failure.code}: {detail.failure.message}</p>}
-        {selectedEvaluation?.evaluations.map(evaluation => (
+        {activeExperimentEvaluations(state.evaluationHistory).filter(evaluation => !dismissedEvaluations.includes(evaluation.ref.evalId)).map(evaluation => (
           <div key={evaluation.ref.evalId} className={css.meta}>
             <span>{evaluation.ref.evalId}</span>
             <span>{t('status')} {statusLabel(evaluation.status, t)}</span>
             {evaluation.phase !== undefined && <span>{t('evaluation.phase')} {evaluation.phase}</span>}
             <span>{t('evaluation.progress')} {evaluation.settledTasks}/{display(evaluation.plannedTasks, t('unknown'))}</span>
+            <button type="button" aria-label={`${t('table.close')} ${evaluation.ref.evalId}`} onClick={() => { setDismissedEvaluations(current => [...current, evaluation.ref.evalId]) }}>×</button>
             {evaluation.diagnostics.map((diagnostic, ordinal) => (
               <span key={`${diagnostic.code}-${ordinal}`} className={css.error}>{diagnostic.code}: {diagnostic.message}</span>
             ))}

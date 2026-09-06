@@ -830,12 +830,12 @@ export class RefinementRuntime extends Service {
       const existing = seen.get(key)
       if (existing !== undefined) {
         if (failedEvaluation !== undefined) {
-          const failedRef = this.evaluationRef(evidence, owner, model, failedEvaluation)
+          const failedRef = this.evaluationRef(evidence, owner, model, phase, failedEvaluation)
           if (failedRef !== null) refs[existing] = failedRef
         }
         return
       }
-      const ref = this.evaluationRef(evidence, owner, model, failedEvaluation)
+      const ref = this.evaluationRef(evidence, owner, model, phase, failedEvaluation)
       if (ref === null) return
       seen.set(key, refs.length)
       refs.push(ref)
@@ -883,7 +883,8 @@ export class RefinementRuntime extends Service {
       seen.set(key, refs.length)
       refs.push(ref)
     }
-    return refs
+    const planIdentity = JSON.stringify({ seed: round.plan.seed.conditionId, heldOut: round.plan.heldOut.conditionId })
+    return refs.map(ref => ({ ...ref, planIdentity }))
   }
 
   private validateEvaluationAttempts(round: GearRound): void {
@@ -951,6 +952,7 @@ export class RefinementRuntime extends Service {
       candidateId: owner,
       requestedModelId: attempt.requestedModelId,
       conditionId: attempt.conditionId,
+      partition: attempt.phase.startsWith('seed-') ? 'train' : 'test',
       benchmarkId: identity.benchmarkId,
       benchmarkRevision: identity.benchmarkRevision,
       ...(attempt.status === 'rerunning' ? { rerunning: true as const } : {}),
@@ -969,6 +971,7 @@ export class RefinementRuntime extends Service {
     evidence: GearEvaluationEvidence,
     owner: RefinementCandidateId,
     requestedModelId: string,
+    phase: GearEvaluationAttempt['phase'],
     failedEvaluation?: GearFailedEvaluation,
   ): RefinementEvaluationRef | null {
     if (!EVAL_ID.test(evidence.evalId)) throw new TypeError(`Gear eval id is invalid: ${evidence.evalId}`)
@@ -993,6 +996,7 @@ export class RefinementRuntime extends Service {
       candidateId: owner,
       requestedModelId,
       conditionId: evidence.conditionId,
+      partition: phase.startsWith('seed-') ? 'train' : 'test',
       benchmarkId: identity.benchmarkId,
       benchmarkRevision: identity.benchmarkRevision,
       ...(failedEvaluation === undefined ? {} : {

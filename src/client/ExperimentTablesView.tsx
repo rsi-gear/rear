@@ -9,9 +9,11 @@ import type {
 } from '../types.ts'
 import {
   experimentCombinationTable,
+  experimentBenchmarkSelection,
   experimentTaskMatrix,
   modelIdentity,
   type ExperimentCombinationRow,
+  type ExperimentBenchmarkColumn,
 } from './experiment-tables.ts'
 import type { RefinementKey } from './locales.ts'
 
@@ -56,7 +58,7 @@ function ProcessScore({ value, count, total, t }: { readonly value: number | nul
 
 function CombinationStatus({ row, t }: { readonly row: ExperimentCombinationRow; readonly t: T }) {
   const label = row.status === 'complete' ? t('table.statusComplete')
-    : t('table.statusProvisional')
+    : row.status === 'unscored' ? t('table.statusUnscored') : t('table.statusProvisional')
   const tone = row.status === 'complete' ? 'best' : undefined
   return <span className={css.pill} data-tone={tone}>{label}</span>
 }
@@ -103,7 +105,7 @@ function CopyableInfo({ summary, items, copyLabel, title, closeLabel }: {
   </>
 }
 
-/** Two-table experiment detail: choose two scored iterations, then inspect task changes. */
+/** Two-table experiment detail: select retained evaluations, then inspect task trajectories. */
 export function ExperimentTablesView({
   detail,
   evaluationHistory,
@@ -129,15 +131,25 @@ export function ExperimentTablesView({
   const [selectedTaskKey, setSelectedTaskKey] = useState<string | null>(null)
   const [selectedRunIds, setSelectedRunIds] = useState<readonly HitchRunId[]>([])
 
-  const activeBenchmarkKey = table.benchmarks.some(item => item.key === benchmarkSelection)
-    ? benchmarkSelection
-    : table.benchmarks[0]?.key ?? null
   const activeCombinationHarnessKey = table.harnesses.some(item => item.key === combinationHarnessKey)
     ? combinationHarnessKey : null
   const activeCombinationModelKey = table.models.some(item => item.key === combinationModelKey)
     ? combinationModelKey : null
   const validComparisonKeys = new Set(table.rows.map(row => row.key))
   const activeComparisonKeys = comparisonSelection.filter(key => validComparisonKeys.has(key))
+  const benchmarkChoice = experimentBenchmarkSelection(table, activeComparisonKeys, benchmarkSelection)
+  const activeBenchmarkKey = benchmarkChoice.activeKey
+  const benchmarkLabel = (benchmark: ExperimentBenchmarkColumn): string => {
+    const partition = benchmark.partition === undefined ? '' : ` · ${t(`table.${benchmark.partition}`)}`
+    const ambiguous = table.benchmarks.filter(item => item.id === benchmark.id && item.partition === benchmark.partition).length > 1
+    return `${benchmark.id}${partition}${ambiguous ? ` · ${short(benchmark.revision, t('unknown'))}` : ''}`
+  }
+  const rowLabel = (row: ExperimentCombinationRow): string => {
+    const peers = table.rows.filter(item => item.iterationId === row.iterationId && item.candidateRole === row.candidateRole)
+      .sort((left, right) => left.key.localeCompare(right.key))
+    const suffix = peers.length > 1 ? ` ${peers.findIndex(item => item.key === row.key) + 1}` : ''
+    return `${t('breakdown.iteration')} ${String(row.iterationOrdinal).padStart(2, '0')} · ${t(row.candidateRole)}${suffix}`
+  }
   const matrix = useMemo(() => experimentTaskMatrix(
     table,
     evaluationHistory,
@@ -185,6 +197,7 @@ export function ExperimentTablesView({
 
   useEffect(() => {
     setComparisonSelection([])
+    setBenchmarkSelection(null)
     setCombinationHarnessKey(null)
     setCombinationModelKey(null)
   }, [detail.id])
@@ -237,29 +250,30 @@ export function ExperimentTablesView({
                     {table.models.map(item => <option value={item.key} key={item.key}>{item.id}</option>)}
                   </select>
                 </label></th>
-                {table.benchmarks.map(benchmark => <th key={benchmark.key}>{benchmark.id}</th>)}
+                {table.benchmarks.map(benchmark => <th key={benchmark.key} title={benchmark.revision}>{benchmarkLabel(benchmark)}</th>)}
                 <th><SortButton active={combinationSort === 'score'} onClick={() => { setCombinationSort('score') }}>{t('portfolio.meanReward')}</SortButton></th>
                 <th><SortButton active={combinationSort === 'coverage'} onClick={() => { setCombinationSort('coverage') }}>{t('table.coverage')}</SortButton></th>
               </tr></thead>
               <tbody>{visibleRows.map((row, index) => {
-                const evaluationIds = [...new Set(row.cells.flatMap(cell => cell.score?.evaluationIds ?? []))]
+                const evaluationIds = [...new Set(row.cells.flatMap(cell => cell.evaluationIds))]
                 const evalValue = evaluationIds.length === 0 ? t('unknown') : evaluationIds.join('\n')
                 return <tr key={row.key}>
-                  <td><strong>{index + 1}</strong>{row.key === table.leadingRow?.key && <span className={css.pill} data-tone="best">{t('breakdown.best')}</span>}</td>
+                  <td><strong>{row.status === 'unscored' ? '—' : index + 1}</strong>{row.key === table.leadingRow?.key && <span className={css.pill} data-tone="best">{t('breakdown.best')}</span>}</td>
                   <td className={css.identity}>
                     <div className={css.iterationChoice}>
                       <input
                         type="checkbox"
-                        aria-label={`${t('table.selectIteration')} ${String(row.iterationOrdinal).padStart(2, '0')}`}
+                        aria-label={`${t('table.selectIteration')} ${rowLabel(row)}`}
                         checked={activeComparisonKeys.includes(row.key)}
                         onChange={event => { setComparisonIteration(row, event.currentTarget.checked) }}
                       />
                       <CopyableInfo copyLabel={t('table.copy')} title={t('table.fullInfo')} closeLabel={t('table.close')} summary={<>
-                        <strong>{t('breakdown.iteration')} {String(row.iterationOrdinal).padStart(2, '0')}</strong>
+                        <strong>{rowLabel(row)}</strong>
                         <span>{row.directionSummary ?? t('table.noDirection')}</span>
                         <small>Eval ID · {short(evaluationIds[0], t('unknown'))}</small>
                       </>} items={[
                         { label: t('breakdown.iteration'), value: String(row.iterationOrdinal).padStart(2, '0') },
+                        { label: 'Round ID', value: row.iterationId },
                         { label: t('table.iterationDirection'), value: row.directionSummary ?? t('table.noDirection') },
                         { label: t('table.candidate'), value: row.candidateLabel },
                         { label: 'Eval ID', value: evalValue },
@@ -291,22 +305,23 @@ export function ExperimentTablesView({
         <div className={css.sectionHeader}>
           <div><span className={css.kicker}>02 · Task</span><h2>{t('table.taskTitle')}</h2><span className={css.muted}>{t('table.taskHint')}</span></div>
           <div className={css.controls}>
-            {table.benchmarks.length > 1 && (
+            {benchmarkChoice.benchmarks.length > 1 && (
               <label className={css.control}>{t('table.benchmark')}
                 <select value={activeBenchmarkKey ?? ''} onChange={event => { setBenchmarkSelection(event.currentTarget.value) }}>
-                  {table.benchmarks.map(item => <option value={item.key} key={item.key}>{item.id}</option>)}
+                  {benchmarkChoice.benchmarks.map(item => <option value={item.key} key={item.key}>{benchmarkLabel(item)}</option>)}
                 </select>
               </label>
             )}
           </div>
         </div>
+        {!benchmarkChoice.shared && <p className={css.muted}>{t('table.noSharedBenchmark')}</p>}
         {activeComparisonKeys.length === 0 ? <div className={css.empty}>{t('table.chooseIterations')}</div>
           : matrix.columns.length === 0 ? <div className={css.empty}>{t('table.noMatchingCombinations')}</div>
             : (
               <div className={css.tableWrap}>
                 <table className={`${css.table} ${css.taskTable}`}>
                   <thead><tr><th>{t('task')}</th>{matrix.columns.map(column => (
-                    <th key={column.key}>{t('breakdown.iteration')} {String(column.iterationOrdinal).padStart(2, '0')}</th>
+                    <th key={column.key}>{rowLabel(column)}</th>
                   ))}</tr></thead>
                   <tbody>{matrix.rows.map(row => (
                     <tr key={row.taskKey}>

@@ -70,6 +70,10 @@ export interface RefinementEvaluationRef {
   readonly benchmarkRevision: string
   /** Gear's persisted evaluation condition, excluding per-run remaining budgets. */
   readonly conditionId?: string
+  /** Gear's authoritative dataset role; benchmark revisions alone do not name a split. */
+  readonly partition?: 'train' | 'test'
+  /** Shared seed/held-out plan identity for one experiment combination, not run comparability. */
+  readonly planIdentity?: string
   /** Gear currently owns an explicit task-level rerun for this eval. */
   readonly rerunning?: true
   /** Present only when Gear authoritatively recorded this as failed evaluation evidence. */
