@@ -1,5 +1,18 @@
+import { traceChatErrors } from '../trace-chat-errors.ts'
+
 /** Refinement workbench copy keys. */
 export type RefinementKey =
+  | `analysis.error.${keyof typeof traceChatErrors}`
+  | 'workbench.tabs' | 'workbench.traces' | 'workbench.diff' | 'trajectory.metadata'
+  | 'analysis.title' | 'analysis.open' | 'analysis.scope'
+  | 'analysis.subtitle' | 'analysis.close' | 'analysis.history' | 'analysis.new' | 'analysis.snapshot' | 'analysis.selection'
+  | 'analysis.loading' | 'analysis.retry' | 'analysis.resize'
+  | 'analysis.running'
+  | 'diff.title' | 'diff.pick' | 'diff.search' | 'diff.block' | 'diff.preview'
+  | 'diff.add' | 'diff.addSelection' | 'diff.selectHint' | 'diff.noBlocks' | 'diff.result'
+  | 'diff.showAll' | 'diff.identical' | 'diff.tooLarge' | 'diff.unchanged' | 'diff.noNewline'
+  | 'diff.system' | 'diff.missingSystem' | 'diff.basket' | 'diff.clear' | 'diff.baseline' | 'diff.remove'
+  | 'diff.kindSystem' | 'diff.kindTools' | 'diff.kindModel' | 'diff.kindInput' | 'diff.kindOutput'
   | 'score.process' | 'score.total' | 'score.details' | 'score.components' | 'score.feedback' | 'trajectory.phase'
   | 'view.refinement' | 'empty.title' | 'empty.body' | 'loading' | 'unknown'
   | 'overview.title' | 'evaluation.title' | 'comparison.title' | 'back'
@@ -45,6 +58,34 @@ export type RefinementKey =
 
 /** English refinement workbench dictionary. */
 export const en: Record<RefinementKey, string> = {
+  'analysis.error.unavailable': traceChatErrors.unavailable,
+  'analysis.error.model': traceChatErrors.model,
+  'analysis.error.directory': traceChatErrors.directory,
+  'analysis.error.conflict': traceChatErrors.conflict,
+  'analysis.error.record': traceChatErrors.record,
+  'analysis.error.changed': traceChatErrors.changed,
+  'analysis.error.checksum': traceChatErrors.checksum,
+  'analysis.error.size': traceChatErrors.size,
+  'analysis.error.missing': traceChatErrors.missing,
+  'analysis.error.unsupported': traceChatErrors.unsupported,
+  'trajectory.metadata': 'Runtime & provenance',
+  'workbench.tabs': 'Trace workspace', 'workbench.traces': 'Trajectories', 'workbench.diff': 'Block diff',
+  'analysis.title': 'Trace chat', 'analysis.subtitle': 'Investigate alongside your evidence',
+  'analysis.open': 'Show trace chat', 'analysis.close': 'Collapse trace chat', 'analysis.scope': 'traces',
+  'analysis.running': 'Preparing evidence and conversation…', 'analysis.history': 'Analysis history for these traces', 'analysis.new': 'New analysis',
+  'analysis.snapshot': 'Saved snapshot', 'analysis.selection': 'Current selection',
+  'analysis.loading': 'Loading conversation…', 'analysis.retry': 'Retry',
+  'analysis.resize': 'Resize trace chat',
+  'diff.title': 'Compare any blocks',
+  'diff.kindSystem': 'System prompt', 'diff.kindTools': 'Tool schemas', 'diff.kindModel': 'Model config',
+  'diff.kindInput': 'Tool input', 'diff.kindOutput': 'Tool output',
+  'diff.pick': 'Select block', 'diff.search': 'Filter block type / seq', 'diff.block': 'Source block', 'diff.preview': 'Source preview',
+  'diff.add': 'Add whole block', 'diff.addSelection': 'Add selected text', 'diff.selectHint': 'Select text first.',
+  'diff.noBlocks': 'No matching blocks.', 'diff.result': 'Block difference', 'diff.showAll': 'Show unchanged lines',
+  'diff.identical': 'These selections are identical.', 'diff.tooLarge': 'Content too large. Full text shown; select a shorter excerpt to compare.',
+  'diff.unchanged': 'unchanged lines', 'diff.noNewline': 'No newline at end', 'diff.system': 'Compare first system prompts',
+  'diff.missingSystem': 'Some traces have no recorded system prompt.',
+  'diff.basket': 'Comparison list', 'diff.clear': 'Clear comparison list', 'diff.baseline': 'Baseline', 'diff.remove': 'Remove',
   'score.process': 'Process score', 'score.total': 'Total score', 'score.details': 'Verifier evidence',
   'score.components': 'Components', 'score.feedback': 'Feedback', 'trajectory.phase': 'Phase',
   'view.refinement': 'Refine',
@@ -129,6 +170,34 @@ export const en: Record<RefinementKey, string> = {
 
 /** Simplified Chinese refinement workbench dictionary. */
 export const zh: Record<RefinementKey, string> = {
+  'analysis.error.unavailable': 'DSH 原生会话服务不可用。',
+  'analysis.error.model': '请先在 Chat 中选择可用模型。',
+  'analysis.error.directory': '轨迹分析目录不是普通目录。',
+  'analysis.error.conflict': '该分析请求已绑定另一组轨迹或问题，请新建分析。',
+  'analysis.error.record': '轨迹分析的会话记录已损坏。',
+  'analysis.error.changed': '加载期间轨迹发生变化，请重试。',
+  'analysis.error.checksum': '轨迹标识或校验和不匹配。',
+  'analysis.error.size': '轨迹导出超过 50 MB，请减少数量；证据未被截断。',
+  'analysis.error.missing': '工作区中未找到该会话。',
+  'analysis.error.unsupported': '当前 DSH 版本不支持内嵌 Chat。',
+  'trajectory.metadata': '运行信息与来源',
+  'workbench.tabs': '轨迹工作区', 'workbench.traces': '轨迹', 'workbench.diff': '块 Diff',
+  'analysis.title': '轨迹分析', 'analysis.subtitle': '对照证据，继续追问',
+  'analysis.open': '展开轨迹分析', 'analysis.close': '收起轨迹分析', 'analysis.scope': '条轨迹',
+  'analysis.running': '正在准备证据和会话…', 'analysis.history': '这些轨迹的分析历史', 'analysis.new': '新建分析',
+  'analysis.snapshot': '已保存快照', 'analysis.selection': '当前选择',
+  'analysis.loading': '正在加载会话…', 'analysis.retry': '重试',
+  'analysis.resize': '调整分析面板大小',
+  'diff.title': '任意内容块对比',
+  'diff.kindSystem': '系统提示词', 'diff.kindTools': '工具定义', 'diff.kindModel': '模型配置',
+  'diff.kindInput': '工具输入', 'diff.kindOutput': '工具输出',
+  'diff.pick': '选取内容块', 'diff.search': '按类型 / 序号筛选', 'diff.block': '来源块', 'diff.preview': '原文预览',
+  'diff.add': '加入整个块', 'diff.addSelection': '加入划选文本', 'diff.selectHint': '请先划选文本。',
+  'diff.noBlocks': '没有匹配的内容块。', 'diff.result': '内容块差异', 'diff.showAll': '显示未变化的行',
+  'diff.identical': '所选内容完全相同。', 'diff.tooLarge': '内容过长，已显示完整原文。请缩小选区。',
+  'diff.unchanged': '行未变化', 'diff.noNewline': '末尾无换行', 'diff.system': '对比首个系统提示词',
+  'diff.missingSystem': '部分轨迹没有记录系统提示词。',
+  'diff.basket': '对比列表', 'diff.clear': '清空对比列表', 'diff.baseline': '设为基准', 'diff.remove': '移除',
   'score.process': '过程分', 'score.total': '总分', 'score.details': '评分证据',
   'score.components': '评分项目', 'score.feedback': '反馈', 'trajectory.phase': '阶段',
   'view.refinement': '优化',
@@ -209,6 +278,21 @@ export const zh: Record<RefinementKey, string> = {
   'status.pending': '等待中', 'status.regressed': '回退', 'status.invalid': '无效',
   'status.improved': '提升', 'status.unchanged': '持平', 'status.valid': '有效',
   'status.missing': '缺失',
+}
+
+export function analysisError(message: string, t: (key: RefinementKey) => string): string {
+  const code = (Object.keys(traceChatErrors) as (keyof typeof traceChatErrors)[])
+    .find(key => traceChatErrors[key] === message)
+  return code ? t(`analysis.error.${code}`) : message
+}
+
+export function blockKindLabel(kind: string, t: (key: RefinementKey) => string): string {
+  const keys: Record<string, RefinementKey> = {
+    'system prompt': 'diff.kindSystem', 'tool schemas': 'diff.kindTools', 'model config': 'diff.kindModel',
+    'tool output': 'diff.kindOutput',
+  }
+  if (kind.startsWith('tool input · ')) return `${t('diff.kindInput')} · ${kind.slice('tool input · '.length)}`
+  return keys[kind] ? t(keys[kind]) : kind
 }
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {

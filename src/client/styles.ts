@@ -1,10 +1,11 @@
 /** Styles are injected by the client plugin so the published bundle is self-contained. */
+import { WORKBENCH_STYLES } from './workbench-styles.ts'
 export const REFINEMENT_STYLES = `
 .rear-refinement-root{--rear-bg:var(--dsh-color-bg,#0b0d0e);--rear-panel:#111416;--rear-panel-2:#15191b;--rear-line:rgba(255,255,255,.1);--rear-text:var(--dsh-color-text,#f1f3f2);--rear-muted:var(--dsh-color-text-muted,#8f9895);--rear-accent:#c9ff5a;--rear-green:#67d391;--rear-red:#ff746c;box-sizing:border-box;height:100%;overflow:auto;padding:0 28px calc(var(--dsh-composer-height,152px) + 48px);scroll-padding-bottom:calc(var(--dsh-composer-height,152px) + 16px);color:var(--rear-text);background:var(--rear-bg);font:13px/1.5 ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
-.rear-refinement-root *:not(.rear-refinement-dsh-trajectory *){box-sizing:border-box}
-.rear-refinement-root h1:not(.rear-refinement-dsh-trajectory *),.rear-refinement-root h2:not(.rear-refinement-dsh-trajectory *),.rear-refinement-root h3:not(.rear-refinement-dsh-trajectory *),.rear-refinement-root p:not(.rear-refinement-dsh-trajectory *){margin-top:0}
-.rear-refinement-root h2:not(.rear-refinement-dsh-trajectory *){font-size:20px;line-height:1.2;letter-spacing:-.02em}
-.rear-refinement-root h3:not(.rear-refinement-dsh-trajectory *){font-size:15px}
+.rear-refinement-root *:not(.rear-refinement-dsh-trajectory *, .rear-native-chat *){box-sizing:border-box}
+.rear-refinement-root h1:not(.rear-refinement-dsh-trajectory *, .rear-native-chat *),.rear-refinement-root h2:not(.rear-refinement-dsh-trajectory *, .rear-native-chat *),.rear-refinement-root h3:not(.rear-refinement-dsh-trajectory *, .rear-native-chat *),.rear-refinement-root p:not(.rear-refinement-dsh-trajectory *, .rear-native-chat *){margin-top:0}
+.rear-refinement-root h2:not(.rear-refinement-dsh-trajectory *, .rear-native-chat *){font-size:20px;line-height:1.2;letter-spacing:-.02em}
+.rear-refinement-root h3:not(.rear-refinement-dsh-trajectory *, .rear-native-chat *){font-size:15px}
 .rear-refinement-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .rear-refinement-row{justify-content:flex-start}
 .rear-refinement-muted{display:block;color:var(--rear-muted)}
@@ -217,10 +218,10 @@ export const REFINEMENT_STYLES = `
 .rear-refinement-dsh-trajectory{--dsh-composer-height:0px;box-sizing:border-box;height:clamp(480px,calc(100vh - 360px),720px);min-height:480px;overflow:hidden;color:var(--dsw-alias-label-primary,var(--rear-text));background:var(--dsw-alias-bg-layer-1,var(--rear-panel))}
 .rear-refinement-card{padding:14px;border:1px solid var(--rear-line);border-radius:8px;background:rgba(255,255,255,.025)}
 .rear-refinement-raw{max-height:60vh;margin:0;padding:12px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere}
-.rear-refinement-root button:not(.rear-refinement-dsh-trajectory *){padding:6px 10px;border:1px solid var(--rear-line);border-radius:7px;color:inherit;background:rgba(255,255,255,.035);font:inherit;cursor:pointer;transition:border-color .16s,background .16s,transform .16s}
-.rear-refinement-root button:not(.rear-refinement-dsh-trajectory *):hover:not(:disabled){border-color:rgba(255,255,255,.24);background:rgba(255,255,255,.065)}
-.rear-refinement-root button:not(.rear-refinement-dsh-trajectory *):active:not(:disabled){transform:translateY(1px)}
-.rear-refinement-root button:not(.rear-refinement-dsh-trajectory *):disabled{opacity:.4;cursor:default}
+.rear-refinement-root button:not(.rear-refinement-dsh-trajectory *, .rear-native-chat *){padding:6px 10px;border:1px solid var(--rear-line);border-radius:7px;color:inherit;background:rgba(255,255,255,.035);font:inherit;cursor:pointer;transition:border-color .16s,background .16s,transform .16s}
+.rear-refinement-root button:not(.rear-refinement-dsh-trajectory *, .rear-native-chat *):hover:not(:disabled){border-color:rgba(255,255,255,.24);background:rgba(255,255,255,.065)}
+.rear-refinement-root button:not(.rear-refinement-dsh-trajectory *, .rear-native-chat *):active:not(:disabled){transform:translateY(1px)}
+.rear-refinement-root button:not(.rear-refinement-dsh-trajectory *, .rear-native-chat *):disabled{opacity:.4;cursor:default}
 .rear-refinement-meta{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 12px;margin:10px 0}
 .rear-refinement-meta dt{color:var(--rear-muted)}
 .rear-refinement-meta dd{margin:0;overflow-wrap:anywhere}
@@ -237,7 +238,7 @@ export function mountStyles(): () => void {
   if (existing !== null) return () => {}
   const tag = document.createElement('style')
   tag.dataset.plugin = 'dsh-plugin-rear'
-  tag.textContent = REFINEMENT_STYLES
+  tag.textContent = REFINEMENT_STYLES + WORKBENCH_STYLES
   document.head.appendChild(tag)
   return () => { tag.remove() }
 }

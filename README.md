@@ -1,6 +1,8 @@
 # dsh-plugin-rear
 
-Rear is a read-only DeepSeek Harness workbench for experiments produced by Gear and trajectories persisted by Hitch.
+[简体中文](README.zh-CN.md)
+
+Rear is a DeepSeek Harness workbench with read-only access to Gear experiments and Hitch trajectories, plus dedicated local agent workspaces for trace analysis.
 
 Gear is the only refinement control plane. It owns `/refine`, candidate generation, evaluation scheduling, promotion, and experiment state. Rear does not register `/refine`, inspect its command return value, persist a refinement sidecar, cancel experiments, or modify Gear state.
 
@@ -42,6 +44,68 @@ Benchmark grouping uses Gear's persisted condition identity, or a validated Hitc
 
 Canonical run events are projected by DSH's registered `ConversationNodeAssembler` definitions and rendered by the native `trajectory` conversation-view component. Rear supplies only a read-only offline Session snapshot per comparison lane; it does not maintain a second trajectory layout, timeline, table, inspector, search, folding, or virtualization implementation.
 
+## Trace chat and block diff
+
+Select 1–4 runs for a task and open trajectory comparison. The evidence tabs and
+analysis remain on the same page:
+
+- **Trajectories** uses DSH's native archived trajectory viewer.
+- **Trace chat** embeds normal DSH Chat in a resizable side panel. Opening it
+  restores matching history or prepares a blank conversation. Choose the model,
+  reasoning effort and access mode in the native composer before sending the
+  first message. Markdown, streaming, tools, approvals, stop and history are
+  provided by DSH. **New analysis** creates another conversation; the history
+  selector shows this source session, experiment and exact run set.
+- **Block diff** compares whole blocks or exact excerpts, including different
+  block types and passages from the same run. Add sources to the comparison
+  list, choose a baseline and switch targets. **Compare first system prompts**
+  selects each run's first recorded `request/header` system prompt. Changed
+  lines/words are highlighted and unchanged lines can be expanded. Diff runs
+  locally without model calls. Changing the run set resets the comparison list.
+
+Collapse and reopen Trace chat without losing the draft. Drag the separator or
+use its arrow keys to resize; below 720 px of workbench width, the panels stack.
+The analysis directory is fixed, so full-page workspace/preset navigation is
+omitted from the embedded Chat. UI labels follow DSH's English/Chinese language
+setting; archived evidence and protocol identifiers retain their original text.
+
+Each analysis has its own native workspace in the left sidebar and a directory:
+
+```text
+trace-chats/trace-<request UUID>/
+  manifest.json          # experiment, run identities and checksums
+  traces/                # canonical JSON, event JSONL and line indexes
+  AGENTS.md / README.md   # evidence-reading instructions
+  session.json           # native session identity and admission state
+  analysis/              # generated scripts, notes and reports
+```
+
+Preparing the workspace makes no model request and does not copy ordinary Chat
+history. After a message is sent, the agent reads relevant files with its normal
+tools; Rear does not insert every trace into each request. Snapshots remain fixed
+when the original experiment changes. Conversation logs use DSH's durable store
+and survive browser reloads and host restarts. Repeated preparation keeps the
+same request/session identity and preserves later model/access choices. Existing
+callers can supply an initial question; an uncertain admission is never replayed
+automatically.
+
+Exports use the same experiment membership and sealed-evidence checks as the
+viewer, plus complete canonical checksums. The host reads the sources; browser
+trace text is not accepted. Canonical source data above 50 MB fails without truncation.
+Provider-only runs without canonical documents cannot be exported. Sources are
+initially read-only; workspace instructions direct generated work into
+`analysis/`. The agent uses normal host permissions: the working directory is
+not an OS sandbox. Gear/Hitch readers remain read-only. Block excerpts retain
+run ID, event sequence, field path and exact source offsets, including CRLF text.
+An oversized diff shows the complete source texts and requests a smaller excerpt.
+
+Set `traceChatsRoot` to an absolute directory, or use the default
+`<source session cwd>/trace-chats`. This repository ignores `/trace-chats/`.
+The embedded adapter is verified against DSH `0.1.1-rc.2`; private renderer and
+history seams are isolated in `DshNativeChatSurface.tsx`. Unsupported assemblies
+show an error. Creating analysis sessions requires DSH's `apiProxy`; the
+read-only Refine views remain usable without it.
+
 ## Configuration
 
 The bundled Loader row is dormant. Enable it and provide explicit state roots and limits:
@@ -50,6 +114,7 @@ The bundled Loader row is dormant. Enable it and provide explicit state roots an
 - id: rear-refinement
   name: dsh-plugin-rear
   config:
+    traceChatsRoot: /absolute/path/to/rear/trace-chats
     trajectoryResponseMaxBytes: 8388608
     providerEvidencePageMaxBytes: 262144
     changeWaitMs: 25000
@@ -71,12 +136,15 @@ The plugin watches both roots and asks connected views to perform an authoritati
 ## Development
 
 ```bash
-npm install
+npm ci
 npm run typecheck
-npm test
 npm run build
-npm run pack:check
+npm test
+npm pack --dry-run --ignore-scripts
 ```
+
+Build before the full test suite; package tests inspect `lib/client.js`. See
+[Contributing](CONTRIBUTING.md) for branch, validation and bilingual maintenance rules.
 
 The dashboard fixture generator remains a deterministic UI/evidence fixture for tests; production discovery always starts from Gear's persisted registry and round files.
 
