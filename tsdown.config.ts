@@ -13,6 +13,7 @@ export default {
   sourcemap: true,
   clean: false,
   deps: {
+    alwaysBundle: ['diff'],
     neverBundle: [
       'react',
       'react/jsx-runtime',

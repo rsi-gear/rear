@@ -39,5 +39,6 @@ yarn-error.log*
 /.wrangler/
 /outputs/
 /work/
+/trace-chats/
 /fixtures/dashboard-data/
 *.tsbuildinfo
