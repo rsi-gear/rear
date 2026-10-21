@@ -1,8 +1,142 @@
-# dsh-plugin-rear
+# Rear
 
-Rear is a read-only DeepSeek Harness workbench for experiments produced by Gear and trajectories persisted by Hitch.
+**Observability & annotation**
 
-Gear is the only refinement control plane. It owns `/refine`, candidate generation, evaluation scheduling, promotion, and experiment state. Rear does not register `/refine`, inspect its command return value, persist a refinement sidecar, cancel experiments, or modify Gear state.
+Bring agents into business workflows. Capture interactions, outcomes, and expert feedback through built-in observability and annotation.
+
+English | [简体中文](README.zh-CN.md) · [GEAR website](https://rsigear.xyz) · [Contributing](CONTRIBUTING.md)
+
+> [!IMPORTANT]
+> **Under construction.** This repository is under active development. The current implementation provides an observability and trace-analysis workbench. Business-workflow integration and structured expert annotation are on the roadmap; APIs, interfaces, and setup may change.
+
+## What is Rear?
+
+Rear is being built as the observability and annotation layer of [GEAR](https://github.com/rsi-gear): a place to understand what agents did, inspect the outcomes, and capture expert judgment to guide improvement.
+
+Today, Rear runs as `dsh-plugin-rear` inside DeepSeek Harness (DSH). It brings Gear experiments and Hitch execution evidence into one workbench, with dedicated local agent workspaces for deeper trace analysis.
+
+## What you can use today
+
+- **Explore experiments and outcomes.** Browse Gear experiments, compare candidates and evaluation rounds, and inspect task results, total scores, and available process scores and verifier feedback.
+- **Inspect recorded interactions.** Follow verified Hitch trajectories, model interactions, and execution evidence back to their source runs. Capture availability depends on the upstream harness and recording configuration.
+- **Compare agent behavior.** View 1–4 runs for a task side by side, compare system prompts or selected passages, and inspect line and word differences without model calls.
+- **Analyze traces with an agent.** Open Trace chat alongside the evidence, ask questions in native DSH Chat, and keep scripts, notes, and reports in a dedicated workspace with persistent conversation history.
+
+The feedback shown today comes from recorded verifier results. Structured expert annotation and feedback collection are part of the roadmap below.
+
+## Where Rear fits
+
+| Project | Role | Responsibility |
+| --- | --- | --- |
+| [Gear](https://github.com/rsi-gear/gear) | Agent optimization | Propose, evaluate, and select changes to an agent's harness using task feedback. |
+| [Hitch](https://github.com/rsi-gear/agent-hitch) | Execution & evaluation | Run models and harnesses under controlled conditions and preserve results, trajectories, and supporting evidence. |
+| **Rear** | **Observability & annotation** | Inspect experiments and execution evidence today; build toward business-workflow observability and expert feedback. |
+
+Gear owns optimization decisions and experiment state. Hitch owns execution evidence. Rear reads both and keeps analysis workspaces separate from the original records. It does not start or cancel experiments, promote candidates, or modify Gear/Hitch state.
+
+## Roadmap
+
+We are extending the current workbench toward the full observability and annotation workflow:
+
+- [ ] **Business-workflow integration.** Bring agents into business workflows and capture interactions and outcomes with their task context.
+- [ ] **Expert annotation.** Let domain experts review agent behavior, annotate interactions and outcomes, and record structured feedback linked to the source evidence.
+- [ ] **Feedback for improvement.** Make reviewed examples and expert feedback usable in evaluation and agent optimization while preserving their provenance.
+
+These describe the product direction, not capabilities shipped in the current plugin.
+
+## Configuration
+
+The current workbench requires a DSH host and existing Gear/Hitch state. The development and test baseline is DSH `0.1.1-rc.2`; see [Development](#development) to build the plugin from source.
+
+The bundled Loader row is dormant. Enable it and provide explicit state roots and limits:
+
+```yaml
+- id: rear-refinement
+  name: dsh-plugin-rear
+  config:
+    traceChatsRoot: /absolute/path/to/rear/trace-chats
+    trajectoryResponseMaxBytes: 8388608
+    providerEvidencePageMaxBytes: 262144
+    changeWaitMs: 25000
+    gear:
+      root: /srv/dsh/refine-state
+      watchDebounceMs: 200
+    hitch:
+      id: hitch
+      root: /srv/hitch-state
+      watchDebounceMs: 200
+```
+
+`gear.root` must be the same absolute directory configured in Gear's top-level `stateRoot` field (not under `evolutionState`). `hitch.root` must be the absolute Hitch run-centered state root. Both roots must already exist as real directories; symlinked roots and escaping evidence paths are rejected.
+
+The client loads canonical trajectories through bounded `trajectoryPage` responses. The configured `trajectoryResponseMaxBytes` limits each encoded page, including a fragment of a single large event; content-addressed cursors reject changed snapshots. All pages are assembled before handing the document to DSH. The existing single-response `trajectory` endpoint retains its size limit for older clients. Deploy the host and client build together to enable pagination.
+
+The plugin watches both roots and asks connected views to perform an authoritative rescan after changes. Gear evolutions are global persisted experiments; the active DSH Session scopes only the browser controller, not experiment ownership.
+
+## Trace chat and block diff
+
+Select 1–4 runs for a task and open trajectory comparison. The evidence tabs and
+analysis remain on the same page:
+
+- **Trajectories** uses DSH's native archived trajectory viewer.
+- **Trace chat** embeds normal DSH Chat in a resizable side panel. Opening it
+  restores matching history or prepares a blank conversation. Choose the model,
+  reasoning effort and access mode in the native composer before sending the
+  first message. Markdown, streaming, tools, approvals, stop and history are
+  provided by DSH. **New analysis** creates another conversation; the history
+  selector shows this source session, experiment and exact run set.
+- **Block diff** compares whole blocks or exact excerpts, including different
+  block types and passages from the same run. Add sources to the comparison
+  list, choose a baseline and switch targets. **Compare first system prompts**
+  selects each run's first recorded `request/header` system prompt. Changed
+  lines/words are highlighted and unchanged lines can be expanded. Diff runs
+  locally without model calls. Changing the run set resets the comparison list.
+
+Collapse and reopen Trace chat without losing the draft. Drag the separator or
+use its arrow keys to resize; below 720 px of workbench width, the panels stack.
+The analysis directory is fixed, so full-page workspace/preset navigation is
+omitted from the embedded Chat. UI labels follow DSH's English/Chinese language
+setting; archived evidence and protocol identifiers retain their original text.
+
+Each analysis has its own native workspace in the left sidebar and a directory:
+
+```text
+trace-chats/trace-<request UUID>/
+  manifest.json          # experiment, run identities and checksums
+  traces/                # canonical JSON, event JSONL and line indexes
+  AGENTS.md / README.md   # evidence-reading instructions
+  session.json           # native session identity and admission state
+  analysis/              # generated scripts, notes and reports
+```
+
+Preparing the workspace makes no model request and does not copy ordinary Chat
+history. After a message is sent, the agent reads relevant files with its normal
+tools; Rear does not insert every trace into each request. Snapshots remain fixed
+when the original experiment changes. Conversation logs use DSH's durable store
+and survive browser reloads and host restarts. Repeated preparation keeps the
+same request/session identity and preserves later model/access choices. Existing
+callers can supply an initial question; an uncertain admission is never replayed
+automatically.
+
+Exports use the same experiment membership and sealed-evidence checks as the
+viewer, plus complete canonical checksums. The host reads the sources; browser
+trace text is not accepted. Canonical source data above 50 MB fails without truncation.
+Provider-only runs without canonical documents cannot be exported. Sources are
+initially read-only; workspace instructions direct generated work into
+`analysis/`. The agent uses normal host permissions: the working directory is
+not an OS sandbox. Gear/Hitch readers remain read-only. Block excerpts retain
+run ID, event sequence, field path and exact source offsets, including CRLF text.
+An oversized diff shows the complete source texts and requests a smaller excerpt.
+
+Set `traceChatsRoot` to an absolute directory, or use the default
+`<source session cwd>/trace-chats`. This repository ignores `/trace-chats/`.
+The embedded adapter is verified against DSH `0.1.1-rc.2`; private renderer and
+history seams are isolated in `DshNativeChatSurface.tsx`. Unsupported assemblies
+show an error. Creating analysis sessions requires DSH's `apiProxy`; the
+read-only Refine views remain usable without it.
+
+<details>
+<summary>Technical reference: compatibility and evidence data flow</summary>
 
 ## Compatibility
 
@@ -42,42 +176,27 @@ Benchmark grouping uses Gear's persisted condition identity, or a validated Hitc
 
 Canonical run events are projected by DSH's registered `ConversationNodeAssembler` definitions and rendered by the native `trajectory` conversation-view component. Rear supplies only a read-only offline Session snapshot per comparison lane; it does not maintain a second trajectory layout, timeline, table, inspector, search, folding, or virtualization implementation.
 
-## Configuration
-
-The bundled Loader row is dormant. Enable it and provide explicit state roots and limits:
-
-```yaml
-- id: rear-refinement
-  name: dsh-plugin-rear
-  config:
-    trajectoryResponseMaxBytes: 8388608
-    providerEvidencePageMaxBytes: 262144
-    changeWaitMs: 25000
-    gear:
-      root: /srv/dsh/refine-state
-      watchDebounceMs: 200
-    hitch:
-      id: hitch
-      root: /srv/hitch-state
-      watchDebounceMs: 200
-```
-
-`gear.root` must be the same absolute directory configured in Gear's top-level `stateRoot` field (not under `evolutionState`). `hitch.root` must be the absolute Hitch run-centered state root. Both roots must already exist as real directories; symlinked roots and escaping evidence paths are rejected.
-
-The client loads canonical trajectories through bounded `trajectoryPage` responses. The configured `trajectoryResponseMaxBytes` limits each encoded page, including a fragment of a single large event; content-addressed cursors reject changed snapshots. All pages are assembled before handing the document to DSH. The existing single-response `trajectory` endpoint retains its size limit for older clients. Deploy the host and client build together to enable pagination.
-
-The plugin watches both roots and asks connected views to perform an authoritative rescan after changes. Gear evolutions are global persisted experiments; the active DSH Session scopes only the browser controller, not experiment ownership.
+</details>
 
 ## Development
 
 ```bash
-npm install
+npm ci
 npm run typecheck
-npm test
 npm run build
-npm run pack:check
+npm test
+npm pack --dry-run --ignore-scripts
 ```
+
+Build before the full test suite; package tests inspect `lib/client.js`. See
+[Contributing](CONTRIBUTING.md) for branch, validation and bilingual maintenance rules.
 
 The dashboard fixture generator remains a deterministic UI/evidence fixture for tests; production discovery always starts from Gear's persisted registry and round files.
 
 See [the read-only integration specification](docs/dsh-refinement-workbench-plugin-spec.md) for the ownership and validation contract.
+
+## Community and license
+
+Share use cases, report issues, or discuss annotation workflows through [GitHub issues](https://github.com/rsi-gear/rear/issues) or the [GEAR Discord](https://discord.gg/ZduvAtS2k). Contributions are welcome; see [Contributing](CONTRIBUTING.md).
+
+Rear is licensed under the [MIT license](LICENSE).

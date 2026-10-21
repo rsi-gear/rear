@@ -5,6 +5,7 @@ import { transportError, type RpcResult } from '@deepseek-ai/dsh-host-apiproxy/a
 import { z } from 'zod'
 import type { RefinementId } from './types.ts'
 import type { RefinementRuntime } from './runtime.ts'
+import { TraceChatService, traceChatRequestSchema, traceChatScopeSchema } from './trace-chat.ts'
 
 const session = z.string().min(1)
 const refinement = z.string().min(1)
@@ -96,11 +97,13 @@ export function mountRefinementRpc(
   ctx: Context,
   runtime: RefinementRuntime,
   changeWaitMs: number,
+  traceChatsRoot?: string,
 ): void {
   if (!Number.isSafeInteger(changeWaitMs) || changeWaitMs < 1) {
     throw new TypeError('refinement: changeWaitMs must be a positive safe integer')
   }
   const broker = new ChangeBroker(changeWaitMs)
+  const traceChats = new TraceChatService(ctx, runtime, traceChatsRoot)
   ctx.effect(() => ctx.on('refinement/change', (sessionId, refinementId, token) => {
     broker.publish(sessionId, refinementId, token)
   }), 'refinement-rpc: change broker')
@@ -109,6 +112,8 @@ export function mountRefinementRpc(
   connection.rpc.handle('/refinement', async (endpoint, payload, signal): Promise<RpcResult<unknown>> => {
     try {
       switch (endpoint) {
+        case 'trace-chats': return { ok: true, value: await traceChats.list(traceChatScopeSchema.parse(payload)) }
+        case 'create-trace-chat': return { ok: true, value: await traceChats.create(traceChatRequestSchema.parse(payload), signal) }
         case 'list': return { ok: true, value: runtime.list(schemas.list.parse(payload) as never) }
         case 'get': return { ok: true, value: runtime.get(schemas.get.parse(payload) as never) }
         case 'evaluation': return { ok: true, value: await runtime.evaluation(schemas.evaluation.parse(payload) as never) }

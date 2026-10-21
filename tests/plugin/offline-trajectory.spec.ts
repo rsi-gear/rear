@@ -76,13 +76,13 @@ describe('DSH offline trajectory bridge', () => {
 
   it('keeps REAR element defaults outside the native DSH trajectory subtree', () => {
     expect(REFINEMENT_STYLES).toContain(
-      '.rear-refinement-root *:not(.rear-refinement-dsh-trajectory *){box-sizing:border-box}',
+      '.rear-refinement-root *:not(.rear-refinement-dsh-trajectory *, .rear-native-chat *){box-sizing:border-box}',
     )
     expect(REFINEMENT_STYLES).toContain(
-      '.rear-refinement-root button:not(.rear-refinement-dsh-trajectory *){',
+      '.rear-refinement-root button:not(.rear-refinement-dsh-trajectory *, .rear-native-chat *){',
     )
     expect(REFINEMENT_STYLES).toContain(
-      '.rear-refinement-root h2:not(.rear-refinement-dsh-trajectory *){',
+      '.rear-refinement-root h2:not(.rear-refinement-dsh-trajectory *, .rear-native-chat *){',
     )
     expect(REFINEMENT_STYLES).not.toContain('.rear-refinement-root button{')
     expect(REFINEMENT_STYLES).not.toContain('.rear-refinement-root *{box-sizing:border-box}')

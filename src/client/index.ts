@@ -5,6 +5,7 @@ import {
   EMPTY_CHAT_SNAPSHOT,
   type ConversationSnapshot,
   type SessionId,
+  type ISessions,
 } from '@deepseek-ai/dsh-client-runtime/client'
 import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
@@ -21,6 +22,9 @@ import {
 import type { CanonicalTrajectoryDocument } from '../types.ts'
 import { en, zh } from './locales.ts'
 import { mountStyles } from './styles.ts'
+import { TraceAnalysisController } from './analysis-controller.ts'
+import type { TraceChatSession } from '../trace-chat.ts'
+import { createNativeChatBridge } from './DshNativeChatSurface.tsx'
 
 export { RefinementController } from './controller.ts'
 export type { RefinementRemoteClient, RefinementViewState } from './controller.ts'
@@ -65,7 +69,29 @@ export function apply(ctx: Context): void {
   ctx.effect(mountStyles, 'ui-refinement: styles')
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-refinement: dictionaries')
   const remote = remoteAdapter(ctx)
+  const sessions = ctx.get('sessions') as unknown as ISessions
+  const nativeChat = createNativeChatBridge(ctx.slots, sessions)
   const controllers = new Map<SessionId, RefinementController>()
+  const analyses = new Map<SessionId, TraceAnalysisController>()
+  const analysisFor = (sessionId: SessionId): TraceAnalysisController => {
+    let analysis = analyses.get(sessionId)
+    if (analysis === undefined) {
+      const connection = ctx.get('connection') as unknown as ConnectionHandle
+      analysis = new TraceAnalysisController(async request => {
+        const result = await connection.rpc.call('/refinement', 'create-trace-chat', { ...request, sessionId, locale: ctx.locale.getLocale().active })
+        if (!result.ok) throw new Error(result.error.message)
+        return result.value as TraceChatSession
+      }, async scope => {
+        const result = await connection.rpc.call('/refinement', 'trace-chats', { ...scope, sessionId })
+        if (!result.ok) throw new Error(result.error.message)
+        // Durable history may arrive before the native session roster on reconnect.
+        // The pane waits for that roster; dropping entries here would create duplicates.
+        return result.value as TraceChatSession[]
+      })
+      analyses.set(sessionId, analysis)
+    }
+    return analysis
+  }
   let trajectoryBridge: DshTrajectoryBridge | undefined
   const dshTrajectory = (): DshTrajectoryBridge => {
     trajectoryBridge ??= {
@@ -133,6 +159,8 @@ export function apply(ctx: Context): void {
       closeInteractionEvidence: runId => { controller.closeInteractionEvidence(runId) },
       closeDetails: () => { ctx.layout.closeDetails() },
       dshTrajectory: dshTrajectory(),
+      analysis: analysisFor(sessionId),
+      nativeChat,
     }
   }
 
@@ -145,6 +173,8 @@ export function apply(ctx: Context): void {
   ctx.effect(() => () => {
     for (const controller of controllers.values()) controller.dispose()
     controllers.clear()
+    for (const analysis of analyses.values()) analysis.dispose()
+    analyses.clear()
   }, 'ui-refinement: controller directory')
 
   const t = ctx.locale.bind(NS)

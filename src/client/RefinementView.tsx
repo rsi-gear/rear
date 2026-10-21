@@ -10,13 +10,18 @@ import type {
   RefinementRunView,
 } from '../types.ts'
 import type { RefinementController } from './controller.ts'
-import { en, type RefinementKey } from './locales.ts'
+import type { RefinementKey } from './locales.ts'
 import {
   DshOfflineTrajectorySurface,
   type DshTrajectoryBridge,
 } from './DshOfflineTrajectorySurface.tsx'
 import { ExperimentTablesView, experimentHistoryRuns } from './ExperimentTablesView.tsx'
 import { activeExperimentEvaluations, experimentCombinationTable } from './experiment-tables.ts'
+import { TraceAnalysisPanel } from './TraceAnalysisPanel.tsx'
+import { BlockComparison } from './BlockComparison.tsx'
+import { analysisScopeKey, type TraceAnalysisController } from './analysis-controller.ts'
+import type { NativeChatBridge } from './DshNativeChatSurface.tsx'
+import { TraceWorkbench } from './TraceWorkbench.tsx'
 
 const css = {
   root: 'rear-refinement-root', header: 'rear-refinement-header', list: 'rear-refinement-list',
@@ -71,11 +76,11 @@ export interface RefinementInjected {
   closeInteractionEvidence: RefinementController['closeInteractionEvidence']
   closeDetails: () => void
   dshTrajectory: DshTrajectoryBridge
+  analysis: TraceAnalysisController
+  nativeChat: NativeChatBridge
 }
 
 type ViewProps = ConvViewProps & InjectFace<RefinementInjected> & PropsLocale<'refinement'>
-
-const ENGLISH_T = (key: RefinementKey): string => en[key]
 
 const STATUS_KEYS = {
   queued: 'status.queued', preparing: 'status.preparing', evaluating: 'status.evaluating', settled: 'status.settled',
@@ -122,7 +127,7 @@ function formatTime(timestamp: number): string {
 
 function TrajectoryLane({
   run, document, trajectoryError, loadRaw, closeRaw, raw,
-  loadInteractions, closeInteractions, interactions, dshTrajectory,
+  loadInteractions, closeInteractions, interactions, dshTrajectory, t,
 }: {
   readonly run: RefinementRunView
   readonly document: ReturnType<RefinementController['getSnapshot']>['trajectories'][string] | undefined
@@ -134,12 +139,13 @@ function TrajectoryLane({
   readonly closeInteractions: () => void
   readonly interactions: RefinementInteractionEvidencePage | null
   readonly dshTrajectory: DshTrajectoryBridge
+  readonly t: (key: RefinementKey) => string
 }) {
   const observation = run.observation.state === 'valid'
     ? String(run.observation.reward)
     : run.observation.state === 'invalid'
-      ? `${ENGLISH_T('comparison.invalid')}: ${run.observation.reason}`
-      : ENGLISH_T('unknown')
+      ? `${t('comparison.invalid')}: ${run.observation.reason}`
+      : t('unknown')
   const duration = run.startedAt === undefined || run.completedAt === undefined
     ? null
     : run.completedAt - run.startedAt
@@ -149,71 +155,74 @@ function TrajectoryLane({
         <div className={css.row}>
           <strong>{run.harness.id}</strong>
           <span className={css.pill} title={run.harness.revisionIdentity ?? run.harness.requestedRef}>
-            {shortVersion(run.harness.revisionIdentity ?? run.harness.requestedRef, ENGLISH_T('unknown'))}
+            {shortVersion(run.harness.revisionIdentity ?? run.harness.requestedRef, t('unknown'))}
           </span>
           <span className={css.pill}>#{run.attempt}</span>
-          {run.phase && <span className={css.pill}>{ENGLISH_T('trajectory.phase')} {run.phase.index}/{run.phase.count}</span>}
+          {run.phase && <span className={css.pill}>{t('trajectory.phase')} {run.phase.index}/{run.phase.count}</span>}
         </div>
         <span>{run.model.effectiveId ?? run.model.requestedId}</span>
         <div className={css.facts}>
-          <span className={css.fact}><span className={css.factLabel}>{ENGLISH_T('comparison.reward')}</span>{observation}</span>
-          <span className={css.fact}><span className={css.factLabel}>{ENGLISH_T('comparison.duration')}</span>{duration === null ? ENGLISH_T('unknown') : `${duration} ms`}</span>
-          <span className={css.fact}><span className={css.factLabel}>{ENGLISH_T('state')}</span>{statusLabel(run.execution, ENGLISH_T)}</span>
+          <span className={css.fact}><span className={css.factLabel}>{t('comparison.reward')}</span>{observation}</span>
+          <span className={css.fact}><span className={css.factLabel}>{t('comparison.duration')}</span>{duration === null ? t('unknown') : `${duration} ms`}</span>
+          <span className={css.fact}><span className={css.factLabel}>{t('state')}</span>{statusLabel(run.execution, t)}</span>
         </div>
         {run.trajectory.summary !== undefined && (
           <div className={css.row}>
-            <span>{ENGLISH_T('comparison.tools')} {display(run.trajectory.summary.toolCalls, ENGLISH_T('unknown'))}</span>
-            <span>{ENGLISH_T('comparison.tokens')} {display(run.trajectory.summary.inputTokens, ENGLISH_T('unknown'))}/{display(run.trajectory.summary.outputTokens, ENGLISH_T('unknown'))}</span>
-            <span>{ENGLISH_T('comparison.ttft')} {display(run.trajectory.summary.ttftMs, ENGLISH_T('unknown'))}</span>
+            <span>{t('comparison.tools')} {display(run.trajectory.summary.toolCalls, t('unknown'))}</span>
+            <span>{t('comparison.tokens')} {display(run.trajectory.summary.inputTokens, t('unknown'))}/{display(run.trajectory.summary.outputTokens, t('unknown'))}</span>
+            <span>{t('comparison.ttft')} {display(run.trajectory.summary.ttftMs, t('unknown'))}</span>
           </div>
         )}
-        {run.executionEvidence !== undefined && (
-          <div className={css.row}>
-            <span>{ENGLISH_T('execution.provider')} {run.executionEvidence.provider}</span>
-            <span>{ENGLISH_T('execution.worker')} {display(run.executionEvidence.workerId, ENGLISH_T('unknown'))}</span>
-            <span>{ENGLISH_T('execution.lease')} {display(run.executionEvidence.leaseId, ENGLISH_T('unknown'))}</span>
-            {run.executionEvidence.requestedResources !== undefined && (
-              <span>{ENGLISH_T('execution.requested')} {resources(run.executionEvidence.requestedResources)}</span>
-            )}
-            {run.executionEvidence.observedResources !== undefined && (
-              <span>{ENGLISH_T('execution.observed')} {resources(run.executionEvidence.observedResources)}</span>
-            )}
-            <span title={run.executionEvidence.images.map(image => `${image.reference} (${image.imageDigest})`).join('\n')}>
-              {ENGLISH_T('execution.images')} {run.executionEvidence.images.length}
-            </span>
-          </div>
-        )}
-        {run.capture !== undefined && (
-          <div className={css.row}>
-            <span>{ENGLISH_T('capture.title')} {run.capture.mode}</span>
-            <span>{ENGLISH_T('capture.completeness')} {run.capture.completeness}</span>
-            <span>{ENGLISH_T('capture.interactions')} {run.capture.interactionCount}</span>
-            <span>{ENGLISH_T('capture.redaction')} {run.capture.redaction.status}</span>
-          </div>
-        )}
-        <span className={css.muted}>{ENGLISH_T('comparison.eval')} {run.evalId} · {ENGLISH_T('comparison.trial')} {run.trialId} · {ENGLISH_T('comparison.protocol')} {run.protocolIdentity}</span>
+        <details className="rear-lane-metadata">
+          <summary>{t('trajectory.metadata')}</summary>
+          {run.executionEvidence !== undefined && (
+            <div className={css.row}>
+              <span>{t('execution.provider')} {run.executionEvidence.provider}</span>
+              <span>{t('execution.worker')} {display(run.executionEvidence.workerId, t('unknown'))}</span>
+              <span>{t('execution.lease')} {display(run.executionEvidence.leaseId, t('unknown'))}</span>
+              {run.executionEvidence.requestedResources !== undefined && (
+                <span>{t('execution.requested')} {resources(run.executionEvidence.requestedResources)}</span>
+              )}
+              {run.executionEvidence.observedResources !== undefined && (
+                <span>{t('execution.observed')} {resources(run.executionEvidence.observedResources)}</span>
+              )}
+              <span title={run.executionEvidence.images.map(image => `${image.reference} (${image.imageDigest})`).join('\n')}>
+                {t('execution.images')} {run.executionEvidence.images.length}
+              </span>
+            </div>
+          )}
+          {run.capture !== undefined && (
+            <div className={css.row}>
+              <span>{t('capture.title')} {run.capture.mode}</span>
+              <span>{t('capture.completeness')} {run.capture.completeness}</span>
+              <span>{t('capture.interactions')} {run.capture.interactionCount}</span>
+              <span>{t('capture.redaction')} {run.capture.redaction.status}</span>
+            </div>
+          )}
+          <span className={css.muted}>{t('comparison.eval')} {run.evalId} · {t('comparison.trial')} {run.trialId} · {t('comparison.protocol')} {run.protocolIdentity}</span>
+        </details>
         {run.trajectory.providerFileCount > 0 && (
           <button
             type="button"
             aria-expanded={raw !== null}
             onClick={() => { if (raw === null) loadRaw(null); else closeRaw() }}
-          >{raw === null ? ENGLISH_T('evidence.raw') : ENGLISH_T('evidence.hide')}</button>
+          >{raw === null ? t('evidence.raw') : t('evidence.hide')}</button>
         )}
         {run.capture?.interactionAvailable === true && (
           <button
             type="button"
             aria-expanded={interactions !== null}
             onClick={() => { if (interactions === null) loadInteractions(null); else closeInteractions() }}
-          >{interactions === null ? ENGLISH_T('evidence.interactions') : ENGLISH_T('evidence.hideInteractions')}</button>
+          >{interactions === null ? t('evidence.interactions') : t('evidence.hideInteractions')}</button>
         )}
       </div>
       <div className={css.laneBody}>
-        <VerifierEvidenceView run={run} t={ENGLISH_T} />
+        <VerifierEvidenceView run={run} t={t} />
         {raw !== null && (
           <div>
             <pre className={css.raw}>{raw.content}</pre>
             {raw.nextCursor !== null && (
-              <button type="button" onClick={() => { loadRaw(raw.nextCursor) }}>{ENGLISH_T('evidence.next')}</button>
+              <button type="button" onClick={() => { loadRaw(raw.nextCursor) }}>{t('evidence.next')}</button>
             )}
           </div>
         )}
@@ -221,14 +230,14 @@ function TrajectoryLane({
           <div>
             <pre className={css.raw}>{interactions.content}</pre>
             {interactions.nextCursor !== null && (
-              <button type="button" onClick={() => { loadInteractions(interactions.nextCursor) }}>{ENGLISH_T('evidence.nextInteractions')}</button>
+              <button type="button" onClick={() => { loadInteractions(interactions.nextCursor) }}>{t('evidence.nextInteractions')}</button>
             )}
           </div>
         )}
         {document === undefined
-          ? <div className={css.empty}>{ENGLISH_T('loading')}</div>
+          ? <div className={css.empty}>{t('loading')}</div>
           : document === null
-            ? <div className={css.empty}>{trajectoryError ?? `${run.trajectory.availability} · ${ENGLISH_T('trajectory.empty')}`}</div>
+            ? <div className={css.empty}>{trajectoryError ?? `${run.trajectory.availability} · ${t('trajectory.empty')}`}</div>
             : <DshOfflineTrajectorySurface
                 bridge={dshTrajectory}
                 document={document}
@@ -241,10 +250,11 @@ function TrajectoryLane({
 /** Always-present Refine conversation view with overview, evaluation, and comparison levels. */
 export function RefinementView({
   useRefinement, ensure, selectRefinement, selectIteration, selectRuns, back,
-  loadProviderEvidence, closeProviderEvidence, loadInteractionEvidence, closeInteractionEvidence, dshTrajectory, t,
+  loadProviderEvidence, closeProviderEvidence, loadInteractionEvidence, closeInteractionEvidence, dshTrajectory, analysis, nativeChat, t,
 }: ViewProps) {
   const state = useRefinement(value => value)
   const [dismissedEvaluations, setDismissedEvaluations] = useState<readonly string[]>([])
+  const [toolView, setToolView] = useState<'traces' | 'diff'>('traces')
   useEffect(() => { void ensure() }, [ensure])
   useEffect(() => { setDismissedEvaluations([]) }, [state.detail?.id])
 
@@ -451,7 +461,7 @@ export function RefinementView({
     .sort((left, right) => left.harness.id.localeCompare(right.harness.id) || left.attempt - right.attempt)
   const selectedTaskId = selectedRuns[0]?.taskId ?? state.selectedTaskKey
   return (
-    <main className={css.root}>
+    <main className={`${css.root} rear-comparison-workbench`}>
       <header className={css.header}>
         <button type="button" className={css.backButton} onClick={back} aria-label={t('back')}>←</button>
         <div className={css.comparisonHead}>
@@ -461,63 +471,79 @@ export function RefinementView({
         </div>
       </header>
       {state.error !== null && <p className={css.error}>{state.error}</p>}
-      <section className={css.runPicker}>
-        <div className={css.sectionHeader}>
-          <div><h3>{t('comparison.chooseRuns')}</h3><span className={css.muted}>{t('comparison.chooseHint')}</span></div>
-          <span className={css.pill}>{state.selectedRunIds.length}/4</span>
+      <TraceWorkbench t={t} panel={close => detail !== null && <TraceAnalysisPanel controller={analysis} nativeChat={nativeChat}
+        refinementId={detail.id} runs={selectedRuns} t={t} onClose={close} />}>
+        <div className="rear-workbench-tabs" role="tablist" aria-label={t('workbench.tabs')}>
+          {(['traces', 'diff'] as const).map(view => <button type="button" role="tab" key={view} id={`rear-tab-${view}`}
+            aria-controls={`rear-panel-${view}`} aria-selected={toolView === view}
+            onClick={() => setToolView(view)}>{t(`workbench.${view}`)}</button>)}
         </div>
-        <div className={css.runGrid}>
-          {selectableRuns.map(run => {
-            const selected = state.selectedRunIds.includes(run.id)
-            const disabled = selected ? state.selectedRunIds.length <= 1 : state.selectedRunIds.length >= 4
-            const observation = run.observation.state === 'valid'
-              ? formatScore(run.observation.reward, t('unknown'))
-              : statusLabel(run.observation.state, t)
-            return (
-              <label className={css.runOption} data-selected={selected} data-disabled={disabled} key={run.id}>
-                <input
-                  type="checkbox"
-                  checked={selected}
-                  disabled={disabled}
-                  onChange={() => {
-                    const next = selected
-                      ? state.selectedRunIds.filter(id => id !== run.id)
-                      : [...state.selectedRunIds, run.id]
-                    if (next.length >= 1 && next.length <= 4) void selectRuns(next)
-                  }}
-                />
-                <span className={css.runOptionTop}>
-                  <strong>{run.harness.id}</strong>
-                  <span className={css.pill}>#{run.attempt}</span>
-                </span>
-                <span>{run.model.effectiveId ?? run.model.requestedId}</span>
-                <span className={css.muted}>{shortVersion(run.harness.revisionIdentity ?? run.harness.requestedRef, t('unknown'))} · {t('comparison.reward')} {observation}</span>
-              </label>
-            )
-          })}
-        </div>
-      </section>
-      <div className={css.lanes}>
-        {state.selectedRunIds.map((runId) => {
-          const run = runById.get(runId)
-          if (run === undefined) return null
-          return (
-            <TrajectoryLane
-              key={runId}
-              dshTrajectory={dshTrajectory}
-              run={run}
-              document={state.trajectories[runId]}
-              trajectoryError={state.trajectoryErrors[runId]}
-              loadRaw={(cursor) => { void loadProviderEvidence(runId, 0, cursor) }}
-              closeRaw={() => { closeProviderEvidence(runId) }}
-              raw={state.providerEvidence?.runId === runId ? state.providerEvidence : null}
-              loadInteractions={(cursor) => { void loadInteractionEvidence(runId, cursor) }}
-              closeInteractions={() => { closeInteractionEvidence(runId) }}
-              interactions={state.interactionEvidence?.runId === runId ? state.interactionEvidence : null}
+        <div className="rear-evidence-scroll">
+          <details className={`${css.runPicker} rear-run-selection`}>
+            <summary>{t('comparison.chooseRuns')}<span className={css.pill}>{state.selectedRunIds.length}/4</span></summary>
+            <div className={css.runGrid}>
+              {selectableRuns.map(run => {
+                const selected = state.selectedRunIds.includes(run.id)
+                const disabled = selected ? state.selectedRunIds.length <= 1 : state.selectedRunIds.length >= 4
+                const observation = run.observation.state === 'valid'
+                  ? formatScore(run.observation.reward, t('unknown'))
+                  : statusLabel(run.observation.state, t)
+                return (
+                  <label className={css.runOption} data-selected={selected} data-disabled={disabled} key={run.id}>
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      disabled={disabled}
+                      onChange={() => {
+                        const next = selected
+                          ? state.selectedRunIds.filter(id => id !== run.id)
+                          : [...state.selectedRunIds, run.id]
+                        if (next.length >= 1 && next.length <= 4) void selectRuns(next)
+                      }}
+                    />
+                    <span className={css.runOptionTop}>
+                      <strong>{run.harness.id}</strong>
+                      <span className={css.pill}>#{run.attempt}</span>
+                    </span>
+                    <span>{run.model.effectiveId ?? run.model.requestedId}</span>
+                    <span className={css.muted}>{shortVersion(run.harness.revisionIdentity ?? run.harness.requestedRef, t('unknown'))} · {t('comparison.reward')} {observation}</span>
+                  </label>
+                )
+              })}
+            </div>
+          </details>
+          <div role="tabpanel" id="rear-panel-diff" aria-labelledby="rear-tab-diff" hidden={toolView !== 'diff'}>
+            <BlockComparison
+              key={analysisScopeKey({ refinementId: detail?.id ?? '', runIds: selectedRuns.map(run => run.id) })}
+              runs={selectedRuns} documents={state.trajectories} errors={state.trajectoryErrors} t={t}
             />
-          )
-        })}
-      </div>
+          </div>
+          <div role="tabpanel" id="rear-panel-traces" aria-labelledby="rear-tab-traces" hidden={toolView !== 'traces'}>
+            <div className={css.lanes}>
+              {state.selectedRunIds.map((runId) => {
+                const run = runById.get(runId)
+                if (run === undefined) return null
+                return (
+                  <TrajectoryLane
+                    key={runId}
+                    t={t}
+                    dshTrajectory={dshTrajectory}
+                    run={run}
+                    document={state.trajectories[runId]}
+                    trajectoryError={state.trajectoryErrors[runId]}
+                    loadRaw={(cursor) => { void loadProviderEvidence(runId, 0, cursor) }}
+                    closeRaw={() => { closeProviderEvidence(runId) }}
+                    raw={state.providerEvidence?.runId === runId ? state.providerEvidence : null}
+                    loadInteractions={(cursor) => { void loadInteractionEvidence(runId, cursor) }}
+                    closeInteractions={() => { closeInteractionEvidence(runId) }}
+                    interactions={state.interactionEvidence?.runId === runId ? state.interactionEvidence : null}
+                  />
+                )
+              })}
+            </div>
+          </div>
+        </div>
+      </TraceWorkbench>
     </main>
   )
 }
