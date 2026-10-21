@@ -1,48 +1,77 @@
-# dsh-plugin-rear
+# Rear
 
-[简体中文](README.zh-CN.md)
+**Observability & annotation**
 
-Rear is a DeepSeek Harness workbench with read-only access to Gear experiments and Hitch trajectories, plus dedicated local agent workspaces for trace analysis.
+Bring agents into business workflows. Capture interactions, outcomes, and expert feedback through built-in observability and annotation.
 
-Gear is the only refinement control plane. It owns `/refine`, candidate generation, evaluation scheduling, promotion, and experiment state. Rear does not register `/refine`, inspect its command return value, persist a refinement sidecar, cancel experiments, or modify Gear state.
+English | [简体中文](README.zh-CN.md) · [GEAR website](https://rsigear.xyz) · [Contributing](CONTRIBUTING.md)
 
-## Compatibility
+> [!IMPORTANT]
+> **Under construction.** This repository is under active development. The current implementation provides an observability and trace-analysis workbench. Business-workflow integration and structured expert annotation are on the roadmap; APIs, interfaces, and setup may change.
 
-The development and test baseline is DSH `0.1.1-rc.2`. Rear feature-detects Hitch's daemon artifacts, so legacy CLI evals and daemon-submitted evals remain readable without relying on a Hitch package version. Rear also recognizes the legacy `refinement/created` Session event written by pre-Gear Rear releases, so historical sessions containing that event remain readable. The current Gear-backed runtime never writes or consumes the event, and new refinement views do not depend on it.
+## What is Rear?
 
-The evidence readers support Gear dev `aa460e3` and Hitch dev `7ee8908`: partial evaluations with invalid trials, reused seed/held-out baselines, verifier-only regrades, native phase groups, and standardized verifier score channels. Legacy reward-only results remain readable; an absent process score stays absent.
+Rear is being built as the observability and annotation layer of [GEAR](https://github.com/rsi-gear): a place to understand what agents did, inspect the outcomes, and capture expert judgment to guide improvement.
 
-## Data flow
+Today, Rear runs as `dsh-plugin-rear` inside DeepSeek Harness (DSH). It brings Gear experiments and Hitch execution evidence into one workbench, with dedicated local agent workspaces for deeper trace analysis.
 
-```text
-Gear registry + round state
-  evolutionId / roundId / evalId / runId
-                    │
-                    ▼
-Hitch submission.json + control.json
-                    │ lifecycle/phase only
-Hitch progress.json or result.json
-                    │ authoritative run membership
-                    ▼
-Hitch runs/<runId>/manifest.json
-      │             └─ bundle.index.json + eval/publication.json
-      ├─ trajectory_ref
-      └─ interactions/interaction.ref.json
-                    ▼
-Canonical trajectory / provider evidence / model interactions
+## What you can use today
+
+- **Explore experiments and outcomes.** Browse Gear experiments, compare candidates and evaluation rounds, and inspect task results, total scores, and available process scores and verifier feedback.
+- **Inspect recorded interactions.** Follow verified Hitch trajectories, model interactions, and execution evidence back to their source runs. Capture availability depends on the upstream harness and recording configuration.
+- **Compare agent behavior.** View 1–4 runs for a task side by side, compare system prompts or selected passages, and inspect line and word differences without model calls.
+- **Analyze traces with an agent.** Open Trace chat alongside the evidence, ask questions in native DSH Chat, and keep scripts, notes, and reports in a dedicated workspace with persistent conversation history.
+
+The feedback shown today comes from recorded verifier results. Structured expert annotation and feedback collection are part of the roadmap below.
+
+## Where Rear fits
+
+| Project | Role | Responsibility |
+| --- | --- | --- |
+| [Gear](https://github.com/rsi-gear/gear) | Agent optimization | Propose, evaluate, and select changes to an agent's harness using task feedback. |
+| [Hitch](https://github.com/rsi-gear/agent-hitch) | Execution & evaluation | Run models and harnesses under controlled conditions and preserve results, trajectories, and supporting evidence. |
+| **Rear** | **Observability & annotation** | Inspect experiments and execution evidence today; build toward business-workflow observability and expert feedback. |
+
+Gear owns optimization decisions and experiment state. Hitch owns execution evidence. Rear reads both and keeps analysis workspaces separate from the original records. It does not start or cancel experiments, promote candidates, or modify Gear/Hitch state.
+
+## Roadmap
+
+We are extending the current workbench toward the full observability and annotation workflow:
+
+- [ ] **Business-workflow integration.** Bring agents into business workflows and capture interactions and outcomes with their task context.
+- [ ] **Expert annotation.** Let domain experts review agent behavior, annotate interactions and outcomes, and record structured feedback linked to the source evidence.
+- [ ] **Feedback for improvement.** Make reviewed examples and expert feedback usable in evaluation and agent optimization while preserving their provenance.
+
+These describe the product direction, not capabilities shipped in the current plugin.
+
+## Configuration
+
+The current workbench requires a DSH host and existing Gear/Hitch state. The development and test baseline is DSH `0.1.1-rc.2`; see [Development](#development) to build the plugin from source.
+
+The bundled Loader row is dormant. Enable it and provide explicit state roots and limits:
+
+```yaml
+- id: rear-refinement
+  name: dsh-plugin-rear
+  config:
+    traceChatsRoot: /absolute/path/to/rear/trace-chats
+    trajectoryResponseMaxBytes: 8388608
+    providerEvidencePageMaxBytes: 262144
+    changeWaitMs: 25000
+    gear:
+      root: /srv/dsh/refine-state
+      watchDebounceMs: 200
+    hitch:
+      id: hitch
+      root: /srv/hitch-state
+      watchDebounceMs: 200
 ```
 
-Rear reads `gear.root/registry.json` and `gear.root/evolutions/<evolutionId>/rounds/*.json`. For every Gear evaluation that contains persisted run IDs, it verifies membership against Hitch `progress.json` while running and `result.json` when terminal. `submission.json` and `control.json` supply queued/phase/failure diagnostics but never create trial membership. Rear verifies eval, trial, task, attempt, benchmark, sealed run manifest, trajectory references, file paths, byte counts, and checksums before exposing evidence.
+`gear.root` must be the same absolute directory configured in Gear's top-level `stateRoot` field (not under `evolutionState`). `hitch.root` must be the absolute Hitch run-centered state root. Both roots must already exist as real directories; symlinked roots and escaping evidence paths are rejected.
 
-When `bundle.index.json` is present, Rear additionally validates its complete file set, digests, context identity, bundle digest, and `eval/publication.json` receipt. Execution provider, worker/lease, resources, image identities, and capture completeness are projected into the comparison UI. Independently captured model interactions remain a separate checksum-validated, bounded read-only evidence stream rather than being treated as canonical trajectory events.
+The client loads canonical trajectories through bounded `trajectoryPage` responses. The configured `trajectoryResponseMaxBytes` limits each encoded page, including a fragment of a single large event; content-addressed cursors reject changed snapshots. All pages are assembled before handing the document to DSH. The existing single-response `trajectory` endpoint retains its size limit for older clients. Deploy the host and client build together to enable pagination.
 
-Rear never guesses a run path from a `/refine` response. Gear state supplies the authoritative experiment-to-evaluation association; Hitch supplies the authoritative evaluation-to-trajectory association.
-
-Membership includes both valid and invalid Gear trials. A corrupt experiment is reported independently so the registry remains browsable. Regrades use the digest-verified assessment observation while retaining the sealed source run's trajectory. Native trials resolve every phase through their assessment, run group, sealed bundles, and per-phase trajectory references; incomplete or inconsistent groups are rejected together. Multiple phase conversations contribute one trial observation to score averages.
-
-Benchmark grouping uses Gear's persisted condition identity, or a validated Hitch request policy when reading Hitch directly, rather than each task's remaining timeout. Comparison still checks the actual task environment. Total scores drive the existing reward aggregates; available process scores are averaged separately and expose process components and verifier feedback alongside the trajectory. Partial process-score coverage is shown explicitly.
-
-Canonical run events are projected by DSH's registered `ConversationNodeAssembler` definitions and rendered by the native `trajectory` conversation-view component. Rear supplies only a read-only offline Session snapshot per comparison lane; it does not maintain a second trajectory layout, timeline, table, inspector, search, folding, or virtualization implementation.
+The plugin watches both roots and asks connected views to perform an authoritative rescan after changes. Gear evolutions are global persisted experiments; the active DSH Session scopes only the browser controller, not experiment ownership.
 
 ## Trace chat and block diff
 
@@ -106,32 +135,48 @@ history seams are isolated in `DshNativeChatSurface.tsx`. Unsupported assemblies
 show an error. Creating analysis sessions requires DSH's `apiProxy`; the
 read-only Refine views remain usable without it.
 
-## Configuration
+<details>
+<summary>Technical reference: compatibility and evidence data flow</summary>
 
-The bundled Loader row is dormant. Enable it and provide explicit state roots and limits:
+## Compatibility
 
-```yaml
-- id: rear-refinement
-  name: dsh-plugin-rear
-  config:
-    traceChatsRoot: /absolute/path/to/rear/trace-chats
-    trajectoryResponseMaxBytes: 8388608
-    providerEvidencePageMaxBytes: 262144
-    changeWaitMs: 25000
-    gear:
-      root: /srv/dsh/refine-state
-      watchDebounceMs: 200
-    hitch:
-      id: hitch
-      root: /srv/hitch-state
-      watchDebounceMs: 200
+The development and test baseline is DSH `0.1.1-rc.2`. Rear feature-detects Hitch's daemon artifacts, so legacy CLI evals and daemon-submitted evals remain readable without relying on a Hitch package version. Rear also recognizes the legacy `refinement/created` Session event written by pre-Gear Rear releases, so historical sessions containing that event remain readable. The current Gear-backed runtime never writes or consumes the event, and new refinement views do not depend on it.
+
+The evidence readers support Gear dev `aa460e3` and Hitch dev `7ee8908`: partial evaluations with invalid trials, reused seed/held-out baselines, verifier-only regrades, native phase groups, and standardized verifier score channels. Legacy reward-only results remain readable; an absent process score stays absent.
+
+## Data flow
+
+```text
+Gear registry + round state
+  evolutionId / roundId / evalId / runId
+                    │
+                    ▼
+Hitch submission.json + control.json
+                    │ lifecycle/phase only
+Hitch progress.json or result.json
+                    │ authoritative run membership
+                    ▼
+Hitch runs/<runId>/manifest.json
+      │             └─ bundle.index.json + eval/publication.json
+      ├─ trajectory_ref
+      └─ interactions/interaction.ref.json
+                    ▼
+Canonical trajectory / provider evidence / model interactions
 ```
 
-`gear.root` must be the same absolute directory configured in Gear's top-level `stateRoot` field (not under `evolutionState`). `hitch.root` must be the absolute Hitch run-centered state root. Both roots must already exist as real directories; symlinked roots and escaping evidence paths are rejected.
+Rear reads `gear.root/registry.json` and `gear.root/evolutions/<evolutionId>/rounds/*.json`. For every Gear evaluation that contains persisted run IDs, it verifies membership against Hitch `progress.json` while running and `result.json` when terminal. `submission.json` and `control.json` supply queued/phase/failure diagnostics but never create trial membership. Rear verifies eval, trial, task, attempt, benchmark, sealed run manifest, trajectory references, file paths, byte counts, and checksums before exposing evidence.
 
-The client loads canonical trajectories through bounded `trajectoryPage` responses. The configured `trajectoryResponseMaxBytes` limits each encoded page, including a fragment of a single large event; content-addressed cursors reject changed snapshots. All pages are assembled before handing the document to DSH. The existing single-response `trajectory` endpoint retains its size limit for older clients. Deploy the host and client build together to enable pagination.
+When `bundle.index.json` is present, Rear additionally validates its complete file set, digests, context identity, bundle digest, and `eval/publication.json` receipt. Execution provider, worker/lease, resources, image identities, and capture completeness are projected into the comparison UI. Independently captured model interactions remain a separate checksum-validated, bounded read-only evidence stream rather than being treated as canonical trajectory events.
 
-The plugin watches both roots and asks connected views to perform an authoritative rescan after changes. Gear evolutions are global persisted experiments; the active DSH Session scopes only the browser controller, not experiment ownership.
+Rear never guesses a run path from a `/refine` response. Gear state supplies the authoritative experiment-to-evaluation association; Hitch supplies the authoritative evaluation-to-trajectory association.
+
+Membership includes both valid and invalid Gear trials. A corrupt experiment is reported independently so the registry remains browsable. Regrades use the digest-verified assessment observation while retaining the sealed source run's trajectory. Native trials resolve every phase through their assessment, run group, sealed bundles, and per-phase trajectory references; incomplete or inconsistent groups are rejected together. Multiple phase conversations contribute one trial observation to score averages.
+
+Benchmark grouping uses Gear's persisted condition identity, or a validated Hitch request policy when reading Hitch directly, rather than each task's remaining timeout. Comparison still checks the actual task environment. Total scores drive the existing reward aggregates; available process scores are averaged separately and expose process components and verifier feedback alongside the trajectory. Partial process-score coverage is shown explicitly.
+
+Canonical run events are projected by DSH's registered `ConversationNodeAssembler` definitions and rendered by the native `trajectory` conversation-view component. Rear supplies only a read-only offline Session snapshot per comparison lane; it does not maintain a second trajectory layout, timeline, table, inspector, search, folding, or virtualization implementation.
+
+</details>
 
 ## Development
 
@@ -149,3 +194,9 @@ Build before the full test suite; package tests inspect `lib/client.js`. See
 The dashboard fixture generator remains a deterministic UI/evidence fixture for tests; production discovery always starts from Gear's persisted registry and round files.
 
 See [the read-only integration specification](docs/dsh-refinement-workbench-plugin-spec.md) for the ownership and validation contract.
+
+## Community and license
+
+Share use cases, report issues, or discuss annotation workflows through [GitHub issues](https://github.com/rsi-gear/rear/issues) or the [GEAR Discord](https://discord.gg/ZduvAtS2k). Contributions are welcome; see [Contributing](CONTRIBUTING.md).
+
+Rear is licensed under the [MIT license](LICENSE).
